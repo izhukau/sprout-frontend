@@ -115,7 +115,7 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
                   onOpenConcept?.(id);
                 }}
               >
-                {variant === "concept" ? "Open Subconcepts" : "Open"}
+                {variant === "concept" ? "Open Subconcepts" : "Open Chat"}
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>

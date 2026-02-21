@@ -1,6 +1,7 @@
 "use client";
 
 import type { Edge } from "@xyflow/react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ForceGraphView } from "@/components/force-graph-view";
 import GraphCanvas from "@/components/graph-canvas";
@@ -118,6 +119,7 @@ async function resolveFrontendUserId(preferredUserId?: string | null) {
 }
 
 export function GraphViewContainer() {
+  const router = useRouter();
   const { user } = useAuth();
 
   const [view, setView] = useState<GraphView>({ level: "global" });
@@ -334,9 +336,14 @@ export function GraphViewContainer() {
         void handleOpenConcept(nodeId);
       } else if (view.level === "concept") {
         setExpandedNodeId(null);
+        const query = new URLSearchParams({ nodeId });
+        if (activeUserId) {
+          query.set("userId", activeUserId);
+        }
+        router.push(`/learn?${query.toString()}`);
       }
     },
-    [view, handleOpenConcept],
+    [view, handleOpenConcept, activeUserId, router],
   );
 
   const handleBack = useCallback(() => {

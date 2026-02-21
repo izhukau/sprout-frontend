@@ -21,15 +21,28 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import {
   type FormEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { ExcalidrawBoard } from "@/components/excalidraw-board";
+import { MarkdownLite } from "@/components/markdown-lite";
+import { useAuth } from "@/hooks/use-auth";
+import {
+  type BackendChatMessage,
+  createChatSession,
+  getActiveNodeContent,
+  getNode,
+  listChatMessages,
+  listChatSessions,
+  sendTutorMessage,
+} from "@/lib/backend-api";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -122,6 +135,8 @@ type ChatMessage = {
   content: string;
   linkedCardId: string | null;
   linkedCardTitle: string | null;
+  channel?: "answer" | "clarification";
+  isComplete?: boolean;
 };
 
 // ── Dummy data ─────────────────────────────────────────────────────────────────
@@ -314,9 +329,176 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   },
 ];
 
+function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
+  const parseTaggedUserMessage = (
+    raw: string,
+  ): { content: string; channel: "answer" | "clarification" } => {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("[CLARIFICATION]")) {
+      return {
+        content: trimmed.replace(/^\[CLARIFICATION\]\s*/i, ""),
+        channel: "clarification",
+      };
+    }
+    if (trimmed.startsWith("[ANSWER]")) {
+      return {
+        content: trimmed.replace(/^\[ANSWER\]\s*/i, ""),
+        channel: "answer",
+      };
+    }
+
+    return { content: raw, channel: "answer" };
+  };
+
+  return [...messages]
+    .filter(
+      (message) => message.role === "user" || message.role === "assistant",
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((message) => {
+      if (message.role === "assistant") {
+        return {
+          id: message.id,
+          role: "ai" as const,
+          content: message.content,
+          linkedCardId: null,
+          linkedCardTitle: null,
+        };
+      }
+
+      const parsed = parseTaggedUserMessage(message.content);
+      return {
+        id: message.id,
+        role: "user" as const,
+        content: parsed.content,
+        linkedCardId: null,
+        linkedCardTitle: null,
+        channel: parsed.channel,
+      };
+    });
+}
+
+function splitTutorChunk(content: string): {
+  explanation: string;
+  question: string | null;
+} {
+  const normalized = content.replaceAll("\r\n", "\n").trim();
+  if (!normalized) {
+    return { explanation: "", question: null };
+  }
+
+  const rawLines = normalized.split("\n");
+
+  const normalizeQuestionLine = (line: string) =>
+    line
+      .replace(/^\s*#{1,6}\s*/, "")
+      .replace(/^\s*(?:[-*>]|\d+[.)])\s+/, "")
+      .replace(
+        /^\s*(checkpoint\s+question|new\s+question|question)\s*:\s*/i,
+        "",
+      )
+      .trim();
+
+  const stripQuestionLinePrefix = (line: string) =>
+    line
+      .replace(/^\s*#{1,6}\s*/, "")
+      .replace(/^\s*(?:[-*>]|\d+[.)])\s+/, "")
+      .trim();
+
+  const toMarkerComparable = (line: string) =>
+    stripQuestionLinePrefix(line)
+      .replace(/[*_`~]/g, "")
+      .trim();
+
+  const isQuestionMarkerOnly = (line: string) =>
+    /^(checkpoint\s+question|new\s+question|question)\s*:?\s*$/i.test(
+      toMarkerComparable(line),
+    );
+
+  const extractInlineQuestion = (line: string): string | null => {
+    const stripped = stripQuestionLinePrefix(line);
+    const colonIndex = stripped.indexOf(":");
+    if (colonIndex === -1) return null;
+
+    const marker = stripped
+      .slice(0, colonIndex)
+      .replace(/[*_`~]/g, "")
+      .trim();
+    if (!/^(checkpoint\s+question|new\s+question|question)$/i.test(marker)) {
+      return null;
+    }
+
+    const questionBody = stripped
+      .slice(colonIndex + 1)
+      .replace(/^\s*[*_`~]+\s*/, "")
+      .trim();
+    const questionText = normalizeQuestionLine(questionBody);
+    return questionText || null;
+  };
+
+  const hasInlineQuestion = (line: string): boolean =>
+    /^(checkpoint\s+question|new\s+question|question)\s*:\s*.+$/i.test(
+      toMarkerComparable(line),
+    );
+
+  for (let i = 0; i < rawLines.length; i++) {
+    if (!isQuestionMarkerOnly(rawLines[i])) continue;
+
+    const questionParts: string[] = [];
+    for (let j = i + 1; j < rawLines.length; j++) {
+      if (isQuestionMarkerOnly(rawLines[j]) || hasInlineQuestion(rawLines[j])) {
+        break;
+      }
+      const normalizedLine = normalizeQuestionLine(rawLines[j]);
+      if (normalizedLine) questionParts.push(normalizedLine);
+    }
+    const questionText = questionParts.join(" ").trim();
+
+    if (questionText) {
+      return {
+        explanation: rawLines.slice(0, i).join("\n").trim(),
+        question: questionText,
+      };
+    }
+  }
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const questionText = extractInlineQuestion(rawLines[i]);
+    if (questionText) {
+      return {
+        explanation: rawLines.slice(0, i).join("\n").trim(),
+        question: questionText,
+      };
+    }
+  }
+
+  for (let i = rawLines.length - 1; i >= 0; i--) {
+    const candidate = normalizeQuestionLine(rawLines[i]);
+    if (candidate.endsWith("?")) {
+      return {
+        explanation: rawLines.slice(0, i).join("\n").trim(),
+        question: candidate,
+      };
+    }
+  }
+
+  return {
+    explanation: normalized,
+    question: null,
+  };
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function LearnView() {
+  const searchParams = useSearchParams();
+  const { user } = useAuth();
+
+  const nodeId = searchParams.get("nodeId");
+  const userIdFromQuery = searchParams.get("userId");
+  const backendUserId = userIdFromQuery ?? user?.id ?? null;
+  const isBackendChatEnabled = !!nodeId && !!backendUserId;
+
   const [activeIndex, setActiveIndex] = useState(0);
   const [quizSelected, setQuizSelected] = useState<Record<string, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState<Set<string>>(new Set());
@@ -332,7 +514,16 @@ export function LearnView() {
     {},
   );
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [input, setInput] = useState("");
+  const [clarifyInput, setClarifyInput] = useState("");
+  const [answerInput, setAnswerInput] = useState("");
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+  const [isSessionComplete, setIsSessionComplete] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isTutorSending, setIsTutorSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [nodeTitle, setNodeTitle] = useState<string | null>(null);
+  const [nodeExplanation, setNodeExplanation] = useState<string | null>(null);
+  const [isNodeLoading, setIsNodeLoading] = useState(false);
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -361,22 +552,165 @@ export function LearnView() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgCount]);
 
+  useEffect(() => {
+    if (!isBackendChatEnabled || !nodeId || !backendUserId) {
+      setChatSessionId(null);
+      setIsSessionComplete(false);
+      setIsChatLoading(false);
+      setChatError(null);
+      setMessages(INITIAL_MESSAGES);
+      return;
+    }
+
+    let cancelled = false;
+
+    const bootstrapBackendChat = async () => {
+      setIsChatLoading(true);
+      setChatError(null);
+      setMessages([]);
+
+      try {
+        const sessions = await listChatSessions({
+          userId: backendUserId,
+          nodeId,
+        });
+        const sortedSessions = [...sessions].sort((a, b) =>
+          b.startedAt.localeCompare(a.startedAt),
+        );
+        const resolvedSession =
+          sortedSessions.find((session) => !session.endedAt) ??
+          sortedSessions[0] ??
+          (await createChatSession({ userId: backendUserId, nodeId }));
+
+        if (cancelled) return;
+        setChatSessionId(resolvedSession.id);
+        setIsSessionComplete(Boolean(resolvedSession.endedAt));
+
+        let history = await listChatMessages(resolvedSession.id);
+        if (!history.length) {
+          const firstResponse = await sendTutorMessage(resolvedSession.id, {
+            userId: backendUserId,
+            content: "",
+          });
+          if (cancelled) return;
+          setIsSessionComplete(firstResponse.isComplete);
+          history = await listChatMessages(resolvedSession.id);
+        }
+
+        if (cancelled) return;
+        setMessages(mapBackendMessagesToUi(history));
+      } catch (error) {
+        if (cancelled) return;
+        setChatError(
+          error instanceof Error
+            ? error.message
+            : "Failed to connect tutor chat",
+        );
+      } finally {
+        if (!cancelled) setIsChatLoading(false);
+      }
+    };
+
+    void bootstrapBackendChat();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isBackendChatEnabled, nodeId, backendUserId]);
+
+  useEffect(() => {
+    if (!isBackendChatEnabled || !nodeId) {
+      setNodeTitle(null);
+      setNodeExplanation(null);
+      setIsNodeLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadNodeExplanation = async () => {
+      setIsNodeLoading(true);
+      try {
+        const [node, content] = await Promise.all([
+          getNode(nodeId),
+          getActiveNodeContent(nodeId),
+        ]);
+        if (cancelled) return;
+        setNodeTitle(node.title);
+        setNodeExplanation(content?.explanationMd ?? node.desc ?? null);
+      } catch {
+        if (cancelled) return;
+        setNodeTitle(null);
+        setNodeExplanation(null);
+      } finally {
+        if (!cancelled) setIsNodeLoading(false);
+      }
+    };
+
+    void loadNodeExplanation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isBackendChatEnabled, nodeId]);
+
   const handleContinue = useCallback(() => {
     setActiveIndex((i) => i + 1);
   }, []);
 
-  const handleSend = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (!input.trim()) return;
+  const sendMessageToTutor = useCallback(
+    async (content: string, channel: "answer" | "clarification") => {
+      const trimmedInput = content.trim();
+      if (!trimmedInput) return;
+
       const card = isFinished ? null : activeCard;
       const userMsg: ChatMessage = {
         id: `u-${Date.now()}`,
         role: "user",
-        content: input.trim(),
+        content: trimmedInput,
         linkedCardId: card?.id ?? null,
         linkedCardTitle: card?.title ?? null,
+        channel,
       };
+
+      if (isBackendChatEnabled && chatSessionId && backendUserId) {
+        setMessages((prev) => [...prev, userMsg]);
+        setIsTutorSending(true);
+        setChatError(null);
+
+        try {
+          const taggedContent =
+            channel === "clarification"
+              ? `[CLARIFICATION]\n${trimmedInput}`
+              : `[ANSWER]\n${trimmedInput}`;
+          const response = await sendTutorMessage(chatSessionId, {
+            userId: backendUserId,
+            content: taggedContent,
+          });
+          setIsSessionComplete((prev) => prev || response.isComplete);
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `a-${Date.now()}`,
+              role: "ai",
+              content: response.message,
+              linkedCardId: null,
+              linkedCardTitle: null,
+              isComplete: response.isComplete,
+            },
+          ]);
+        } catch (error) {
+          setChatError(
+            error instanceof Error ? error.message : "Failed to send message",
+          );
+        } finally {
+          setIsTutorSending(false);
+        }
+
+        return;
+      }
+
       const aiMsg: ChatMessage = {
         id: `a-${Date.now()}`,
         role: "ai",
@@ -386,10 +720,38 @@ export function LearnView() {
         linkedCardId: card?.id ?? null,
         linkedCardTitle: card?.title ?? null,
       };
+
       setMessages((prev) => [...prev, userMsg, aiMsg]);
-      setInput("");
     },
-    [input, activeCard, isFinished],
+    [
+      activeCard,
+      isFinished,
+      isBackendChatEnabled,
+      chatSessionId,
+      backendUserId,
+    ],
+  );
+
+  const handleSendClarification = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const text = clarifyInput.trim();
+      if (!text) return;
+      setClarifyInput("");
+      await sendMessageToTutor(text, "clarification");
+    },
+    [clarifyInput, sendMessageToTutor],
+  );
+
+  const handleSubmitAnswer = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const text = answerInput.trim();
+      if (!text) return;
+      setAnswerInput("");
+      await sendMessageToTutor(text, "answer");
+    },
+    [answerInput, sendMessageToTutor],
   );
 
   // Only show messages for cards already studied
@@ -399,9 +761,61 @@ export function LearnView() {
     return idx <= activeIndex;
   });
 
+  const tutorChunks = useMemo(() => {
+    if (!isBackendChatEnabled) return [];
+
+    const aiMessages = messages.filter((message) => message.role === "ai");
+    let lastKnownQuestion: string | null = null;
+
+    return aiMessages.map((message, index) => {
+      const parsed = splitTutorChunk(message.content);
+      const isLastChunk = index === aiMessages.length - 1;
+      const canReusePreviousQuestion =
+        !message.isComplete && !(isLastChunk && isSessionComplete);
+      const question =
+        parsed.question ??
+        (canReusePreviousQuestion
+          ? (lastKnownQuestion ??
+            "What is the key idea from this chunk, in your own words?")
+          : null);
+
+      if (question) {
+        lastKnownQuestion = question;
+      }
+
+      return {
+        id: message.id,
+        index,
+        explanation: parsed.explanation || message.content,
+        question,
+      };
+    });
+  }, [isBackendChatEnabled, isSessionComplete, messages]);
+
+  const currentChunk = tutorChunks.length
+    ? tutorChunks[tutorChunks.length - 1]
+    : null;
+  const currentQuestion = currentChunk?.question ?? null;
+
+  const sidebarMessages = isBackendChatEnabled
+    ? messages.filter(
+        (message) =>
+          message.role === "user" && message.channel === "clarification",
+      )
+    : visibleMessages;
+
   // Cards to render: completed + active only
   const renderedCards = CARDS.slice(0, activeIndex + 1);
   const nextCard = CARDS[activeIndex + 1] as LearnCard | undefined;
+  const isClarificationSendDisabled =
+    !clarifyInput.trim() ||
+    isTutorSending ||
+    (isBackendChatEnabled && (isChatLoading || !chatSessionId));
+  const isAnswerSendDisabled =
+    !answerInput.trim() ||
+    isTutorSending ||
+    !currentQuestion ||
+    (isBackendChatEnabled && (isChatLoading || !chatSessionId));
 
   return (
     <div
@@ -424,198 +838,339 @@ export function LearnView() {
               className="text-sm font-bold uppercase tracking-widest"
               style={{ color: "#ffa025" }}
             >
-              Machine Learning Fundamentals
+              {isBackendChatEnabled
+                ? (nodeTitle ?? "Subconcept")
+                : "Machine Learning Fundamentals"}
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span
-              className="text-sm font-medium"
-              style={{ color: "rgba(255,255,255,0.4)" }}
-            >
-              {Math.min(activeIndex, CARDS.length)} / {CARDS.length}
-            </span>
-            <div
-              className="h-2 w-32 overflow-hidden rounded-full"
-              style={{ background: "rgba(255,255,255,0.1)" }}
-            >
+          {!isBackendChatEnabled && (
+            <div className="flex items-center gap-3">
+              <span
+                className="text-sm font-medium"
+                style={{ color: "rgba(255,255,255,0.4)" }}
+              >
+                {Math.min(activeIndex, CARDS.length)} / {CARDS.length}
+              </span>
               <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{
-                  width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
-                  background: "#ffa025",
-                }}
-              />
+                className="h-2 w-32 overflow-hidden rounded-full"
+                style={{ background: "rgba(255,255,255,0.1)" }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{
+                    width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
+                    background: "#ffa025",
+                  }}
+                />
+              </div>
             </div>
-          </div>
+          )}
         </header>
 
         {/* Scrollable cards */}
         <div className="flex flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-12">
-            {renderedCards.map((card, i) => {
-              const state: "completed" | "active" =
-                i < activeIndex ? "completed" : "active";
-              return (
+          {isBackendChatEnabled ? (
+            <div className="mx-auto w-full max-w-3xl px-6 py-12">
+              {tutorChunks.length > 0 ? (
+                <div className="flex flex-col gap-4">
+                  {tutorChunks.map((chunk) => (
+                    <div
+                      key={chunk.id}
+                      className="rounded-2xl border p-6"
+                      style={{
+                        borderColor: "rgba(255,255,255,0.12)",
+                        background: "rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <BookOpen
+                            className="h-4 w-4"
+                            style={{ color: "#ffa025" }}
+                          />
+                          <h2 className="text-sm font-semibold tracking-wide text-white/90 uppercase">
+                            Chunk {chunk.index + 1}
+                          </h2>
+                        </div>
+                        {chunk.index === tutorChunks.length - 1 && (
+                          <span
+                            className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase"
+                            style={{
+                              background: "rgba(255,160,37,0.14)",
+                              border: "1px solid rgba(255,160,37,0.32)",
+                              color: "#ffd8a8",
+                            }}
+                          >
+                            Current
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        className="text-sm leading-7"
+                        style={{ color: "rgba(255,255,255,0.9)" }}
+                      >
+                        <MarkdownLite content={chunk.explanation} />
+                      </div>
+
+                      {chunk.question && (
+                        <div
+                          className="mt-4 rounded-xl border px-4 py-3"
+                          style={{
+                            borderColor: "rgba(255,160,37,0.3)",
+                            background: "rgba(255,160,37,0.08)",
+                          }}
+                        >
+                          <div className="mb-1 text-xs font-semibold tracking-wide text-[#ffd8a8] uppercase">
+                            Question
+                          </div>
+                          <div
+                            className="text-sm leading-6"
+                            style={{ color: "rgba(255,255,255,0.95)" }}
+                          >
+                            <MarkdownLite content={chunk.question} />
+                          </div>
+                          {chunk.index === tutorChunks.length - 1 && (
+                            <form
+                              onSubmit={handleSubmitAnswer}
+                              className="mt-3 flex gap-2"
+                            >
+                              <input
+                                value={answerInput}
+                                onChange={(e) => setAnswerInput(e.target.value)}
+                                placeholder="Type your answer..."
+                                disabled={
+                                  isTutorSending ||
+                                  (isBackendChatEnabled &&
+                                    (isChatLoading || !chatSessionId))
+                                }
+                                className="flex-1 rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/35"
+                                style={{
+                                  background: "rgba(255,255,255,0.06)",
+                                  border: "1px solid rgba(255,255,255,0.18)",
+                                }}
+                              />
+                              <button
+                                type="submit"
+                                disabled={isAnswerSendDisabled}
+                                className="rounded-lg px-3 py-2 text-sm font-semibold transition-all disabled:opacity-40"
+                                style={{
+                                  background: "#ffa025",
+                                  color: "#070d06",
+                                }}
+                              >
+                                {isTutorSending ? "Sending..." : "Submit"}
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : isChatLoading || isNodeLoading ? (
                 <div
-                  key={card.id}
-                  ref={(el) => {
-                    cardRefs.current[card.id] = el;
+                  className="rounded-2xl border p-8 text-sm"
+                  style={{
+                    borderColor: "rgba(255,255,255,0.12)",
+                    background: "rgba(255,255,255,0.03)",
+                    color: "rgba(255,255,255,0.55)",
                   }}
                 >
-                  {card.type === "summary" && (
-                    <SummaryCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "quiz" && (
-                    <QuizCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      selectedOption={quizSelected[card.id] ?? null}
-                      isSubmitted={quizSubmitted.has(card.id)}
-                      onSelect={(idx) =>
-                        setQuizSelected((p) => ({ ...p, [card.id]: idx }))
-                      }
-                      onSubmit={() =>
-                        setQuizSubmitted((p) => new Set([...p, card.id]))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "code" && (
-                    <CodeCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      value={
-                        codeValues[card.id] !== undefined
-                          ? codeValues[card.id]
-                          : card.starterCode
-                      }
-                      isSubmitted={codeSubmitted.has(card.id)}
-                      onChange={(v) =>
-                        setCodeValues((p) => ({ ...p, [card.id]: v }))
-                      }
-                      onSubmit={() =>
-                        setCodeSubmitted((p) => new Set([...p, card.id]))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "text" && (
-                    <TextCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      value={textValues[card.id] ?? ""}
-                      isSubmitted={textSubmitted.has(card.id)}
-                      onChange={(v) =>
-                        setTextValues((p) => ({ ...p, [card.id]: v }))
-                      }
-                      onSubmit={() =>
-                        setTextSubmitted((p) => new Set([...p, card.id]))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "miro" && (
-                    <MiroCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "voice" && (
-                    <VoiceCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      voiceState={voiceStates[card.id] ?? "idle"}
-                      onVoiceState={(s) =>
-                        setVoiceStates((p) => ({ ...p, [card.id]: s }))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "draw" && (
-                    <DrawCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      isSubmitted={drawSubmitted.has(card.id)}
-                      onSubmit={() =>
-                        setDrawSubmitted((p) => new Set([...p, card.id]))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
-                  {card.type === "miro-summary" && (
-                    <MiroSummaryCardUI
-                      card={card}
-                      cardNumber={i + 1}
-                      total={CARDS.length}
-                      state={state}
-                      embedUrl={miroEmbedUrls[card.id] ?? null}
-                      onEmbedUrl={(url) =>
-                        setMiroEmbedUrls((p) => ({ ...p, [card.id]: url }))
-                      }
-                      onContinue={handleContinue}
-                    />
-                  )}
+                  Preparing first chunk...
                 </div>
-              );
-            })}
-
-            {/* Next locked card placeholder */}
-            {!isFinished && nextCard && (
-              <div
-                ref={(el) => {
-                  if (nextCard) cardRefs.current[nextCard.id] = el;
-                }}
-              >
-                <LockedCardUI
-                  card={nextCard}
-                  cardNumber={activeIndex + 2}
-                  total={CARDS.length}
-                />
-              </div>
-            )}
-
-            {isFinished && (
-              <div
-                className="rounded-2xl border p-12 text-center"
-                style={{
-                  borderColor: "rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.03)",
-                }}
-              >
-                <div className="mb-4 text-5xl">🎓</div>
-                <div className="text-2xl font-bold text-white">
-                  Module Complete!
-                </div>
+              ) : (
                 <div
-                  className="mt-2 text-base"
-                  style={{ color: "rgba(255,255,255,0.45)" }}
+                  className="rounded-2xl border p-8"
+                  style={{
+                    borderColor: "rgba(255,255,255,0.12)",
+                    background: "rgba(255,255,255,0.03)",
+                  }}
                 >
-                  You've finished all cards for Machine Learning Fundamentals.
+                  <div className="mb-3 text-xs font-semibold tracking-wide text-[#ffd8a8] uppercase">
+                    Overview
+                  </div>
+                  <div
+                    className="text-sm leading-7"
+                    style={{ color: "rgba(255,255,255,0.88)" }}
+                  >
+                    <MarkdownLite
+                      content={
+                        nodeExplanation ??
+                        "No tutor chunks yet. Ask a question in the right chat to start the tutoring flow."
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          ) : (
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-12">
+              {renderedCards.map((card, i) => {
+                const state: "completed" | "active" =
+                  i < activeIndex ? "completed" : "active";
+                return (
+                  <div
+                    key={card.id}
+                    ref={(el) => {
+                      cardRefs.current[card.id] = el;
+                    }}
+                  >
+                    {card.type === "summary" && (
+                      <SummaryCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "quiz" && (
+                      <QuizCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        selectedOption={quizSelected[card.id] ?? null}
+                        isSubmitted={quizSubmitted.has(card.id)}
+                        onSelect={(idx) =>
+                          setQuizSelected((p) => ({ ...p, [card.id]: idx }))
+                        }
+                        onSubmit={() =>
+                          setQuizSubmitted((p) => new Set([...p, card.id]))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "code" && (
+                      <CodeCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        value={
+                          codeValues[card.id] !== undefined
+                            ? codeValues[card.id]
+                            : card.starterCode
+                        }
+                        isSubmitted={codeSubmitted.has(card.id)}
+                        onChange={(v) =>
+                          setCodeValues((p) => ({ ...p, [card.id]: v }))
+                        }
+                        onSubmit={() =>
+                          setCodeSubmitted((p) => new Set([...p, card.id]))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "text" && (
+                      <TextCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        value={textValues[card.id] ?? ""}
+                        isSubmitted={textSubmitted.has(card.id)}
+                        onChange={(v) =>
+                          setTextValues((p) => ({ ...p, [card.id]: v }))
+                        }
+                        onSubmit={() =>
+                          setTextSubmitted((p) => new Set([...p, card.id]))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "miro" && (
+                      <MiroCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "voice" && (
+                      <VoiceCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        voiceState={voiceStates[card.id] ?? "idle"}
+                        onVoiceState={(s) =>
+                          setVoiceStates((p) => ({ ...p, [card.id]: s }))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "draw" && (
+                      <DrawCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        isSubmitted={drawSubmitted.has(card.id)}
+                        onSubmit={() =>
+                          setDrawSubmitted((p) => new Set([...p, card.id]))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                    {card.type === "miro-summary" && (
+                      <MiroSummaryCardUI
+                        card={card}
+                        cardNumber={i + 1}
+                        total={CARDS.length}
+                        state={state}
+                        embedUrl={miroEmbedUrls[card.id] ?? null}
+                        onEmbedUrl={(url) =>
+                          setMiroEmbedUrls((p) => ({ ...p, [card.id]: url }))
+                        }
+                        onContinue={handleContinue}
+                      />
+                    )}
+                  </div>
+                );
+              })}
 
-            <div className="h-20" />
-          </div>
+              {/* Next locked card placeholder */}
+              {!isFinished && nextCard && (
+                <div
+                  ref={(el) => {
+                    if (nextCard) cardRefs.current[nextCard.id] = el;
+                  }}
+                >
+                  <LockedCardUI
+                    card={nextCard}
+                    cardNumber={activeIndex + 2}
+                    total={CARDS.length}
+                  />
+                </div>
+              )}
+
+              {isFinished && (
+                <div
+                  className="rounded-2xl border p-12 text-center"
+                  style={{
+                    borderColor: "rgba(255,255,255,0.12)",
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <div className="mb-4 text-5xl">🎓</div>
+                  <div className="text-2xl font-bold text-white">
+                    Module Complete!
+                  </div>
+                  <div
+                    className="mt-2 text-base"
+                    style={{ color: "rgba(255,255,255,0.45)" }}
+                  >
+                    You've finished all cards for Machine Learning Fundamentals.
+                  </div>
+                </div>
+              )}
+
+              <div className="h-20" />
+            </div>
+          )}
         </div>
       </div>
 
@@ -642,15 +1197,19 @@ export function LearnView() {
             <Bot className="h-4 w-4" style={{ color: "#ffa025" }} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-white">AI Tutor</div>
+            <div className="text-sm font-bold text-white">
+              {isBackendChatEnabled ? "Clarification Chat" : "AI Tutor"}
+            </div>
             <div
               className="text-xs"
               style={{ color: "rgba(255,255,255,0.38)" }}
             >
-              Click a message to jump to its card
+              {isBackendChatEnabled
+                ? "Ask clarifying questions. New chunks appear in the center."
+                : "Click a message to jump to its card"}
             </div>
           </div>
-          {!isFinished && (
+          {!isBackendChatEnabled && !isFinished && (
             <div
               className="shrink-0 rounded-full px-3 py-1 text-xs font-bold"
               style={{
@@ -666,7 +1225,46 @@ export function LearnView() {
 
         {/* Messages */}
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5">
-          {visibleMessages.map((msg) => {
+          {isBackendChatEnabled && isChatLoading && (
+            <div
+              className="rounded-xl border px-3 py-2 text-xs"
+              style={{
+                borderColor: "rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.03)",
+                color: "rgba(255,255,255,0.55)",
+              }}
+            >
+              Connecting to tutor...
+            </div>
+          )}
+          {chatError && (
+            <div
+              className="rounded-xl border px-3 py-2 text-xs"
+              style={{
+                borderColor: "rgba(255,120,120,0.3)",
+                background: "rgba(255,80,80,0.08)",
+                color: "rgba(255,200,200,0.95)",
+              }}
+            >
+              {chatError}
+            </div>
+          )}
+          {isBackendChatEnabled &&
+            !isChatLoading &&
+            !chatError &&
+            sidebarMessages.length === 0 && (
+              <div
+                className="rounded-xl border px-3 py-2 text-xs"
+                style={{
+                  borderColor: "rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.03)",
+                  color: "rgba(255,255,255,0.55)",
+                }}
+              >
+                Ask your first clarification about the current chunk.
+              </div>
+            )}
+          {sidebarMessages.map((msg) => {
             const cardIdx = msg.linkedCardId
               ? CARDS.findIndex((c) => c.id === msg.linkedCardId)
               : -1;
@@ -727,7 +1325,7 @@ export function LearnView() {
                         : "rgba(255,255,255,0.82)",
                   }}
                 >
-                  {msg.content}
+                  <MarkdownLite content={msg.content} />
                 </div>
               </div>
             );
@@ -740,7 +1338,7 @@ export function LearnView() {
           className="shrink-0 border-t p-4"
           style={{ borderColor: "rgba(255,255,255,0.08)" }}
         >
-          {!isFinished && activeCard && (
+          {!isBackendChatEnabled && !isFinished && activeCard && (
             <div
               className="mb-2.5 flex items-center gap-1.5 text-xs"
               style={{ color: "rgba(255,255,255,0.4)" }}
@@ -754,13 +1352,18 @@ export function LearnView() {
               </span>
             </div>
           )}
-          <form onSubmit={handleSend} className="flex gap-2">
+          <form onSubmit={handleSendClarification} className="flex gap-2">
             <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={clarifyInput}
+              onChange={(e) => setClarifyInput(e.target.value)}
               placeholder={
-                isFinished ? "Ask a follow-up..." : "Ask anything..."
+                isBackendChatEnabled
+                  ? "Ask for clarification..."
+                  : isFinished
+                    ? "Ask a follow-up..."
+                    : "Ask anything..."
               }
+              disabled={isChatLoading || isTutorSending}
               className="flex-1 rounded-xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/20 transition-colors"
               style={{
                 background: "rgba(255,255,255,0.05)",
@@ -775,11 +1378,18 @@ export function LearnView() {
             />
             <button
               type="submit"
-              disabled={!input.trim()}
+              disabled={isClarificationSendDisabled}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-25 hover:opacity-85 active:scale-95"
               style={{ background: "#ffa025" }}
             >
-              <Send className="h-4 w-4" style={{ color: "#070d06" }} />
+              {isTutorSending ? (
+                <Loader2
+                  className="h-4 w-4 animate-spin"
+                  style={{ color: "#070d06" }}
+                />
+              ) : (
+                <Send className="h-4 w-4" style={{ color: "#070d06" }} />
+              )}
             </button>
           </form>
         </div>

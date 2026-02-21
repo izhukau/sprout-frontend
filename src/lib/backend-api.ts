@@ -28,6 +28,18 @@ export type BackendNode = {
   updatedAt: string;
 };
 
+export type BackendNodeContent = {
+  id: string;
+  nodeId: string;
+  explanationMd: string;
+  visualizationKind: string | null;
+  visualizationPayload: string | null;
+  generatedByModel: string | null;
+  generationPromptHash: string | null;
+  status: "draft" | "active" | "archived";
+  createdAt: string;
+};
+
 export type BackendEdge = {
   id: string;
   sourceNodeId: string;
@@ -49,13 +61,34 @@ export type BackendProgress = {
   updatedAt: string;
 };
 
+export type BackendChatSession = {
+  id: string;
+  userId: string;
+  nodeId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+};
+
+export type BackendChatMessage = {
+  id: string;
+  sessionId: string;
+  userId: string;
+  role: "system" | "user" | "assistant";
+  kind: "learning" | "hint_request" | "hint_response" | "evaluation";
+  content: string;
+  wasSuccessful: boolean | null;
+  successSignal: string | null;
+  createdAt: string;
+};
+
 export const DEFAULT_BRANCH_TITLES = [
   "Data Structures & Algorithms",
   "Systems",
   "Discrete Math",
 ];
 
-const API_PREFIX = process.env.NEXT_PUBLIC_BACKEND_PROXY_PREFIX ?? "/backend-api";
+const API_PREFIX =
+  process.env.NEXT_PUBLIC_BACKEND_PROXY_PREFIX ?? "/backend-api";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -131,6 +164,10 @@ export async function listNodes(filters: {
   return apiFetch<BackendNode[]>(`/api/nodes?${query.toString()}`);
 }
 
+export async function getNode(nodeId: string): Promise<BackendNode> {
+  return apiFetch<BackendNode>(`/api/nodes/${nodeId}`);
+}
+
 export async function createNode(input: {
   userId: string;
   type: "root" | "concept" | "subconcept";
@@ -191,5 +228,56 @@ export async function listDependencyEdges(
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiFetch<BackendEdge[]>(
     `/api/nodes/${parentNodeId}/dependency-edges${suffix}`,
+  );
+}
+
+export async function listChatSessions(filters: {
+  userId?: string;
+  nodeId?: string;
+}): Promise<BackendChatSession[]> {
+  const query = new URLSearchParams();
+  if (filters.userId) query.set("userId", filters.userId);
+  if (filters.nodeId) query.set("nodeId", filters.nodeId);
+  return apiFetch<BackendChatSession[]>(
+    `/api/chat/sessions?${query.toString()}`,
+  );
+}
+
+export async function createChatSession(input: {
+  userId: string;
+  nodeId?: string | null;
+}): Promise<BackendChatSession> {
+  return apiFetch<BackendChatSession>("/api/chat/sessions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listChatMessages(
+  sessionId: string,
+): Promise<BackendChatMessage[]> {
+  return apiFetch<BackendChatMessage[]>(
+    `/api/chat/sessions/${sessionId}/messages`,
+  );
+}
+
+export async function sendTutorMessage(
+  sessionId: string,
+  input: { userId: string; content: string },
+): Promise<{ message: string; isComplete: boolean }> {
+  return apiFetch<{ message: string; isComplete: boolean }>(
+    `/api/chat/sessions/${sessionId}/tutor`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function getActiveNodeContent(
+  nodeId: string,
+): Promise<BackendNodeContent | null> {
+  return apiFetch<BackendNodeContent | null>(
+    `/api/nodes/${nodeId}/contents/active`,
   );
 }
