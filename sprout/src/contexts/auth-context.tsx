@@ -24,12 +24,23 @@ type AuthContextValue = AuthState & {
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
+// TODO: re-enable auth before production
+const DISABLE_AUTH = true;
+const MOCK_USER: SessionUser = {
+  id: "dev",
+  email: "dev@sprout.local",
+  name: "Dev User",
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<SessionUser | null>(
+    DISABLE_AUTH ? MOCK_USER : null,
+  );
+  const [isLoading, setIsLoading] = useState(!DISABLE_AUTH);
 
   useEffect(() => {
+    if (DISABLE_AUTH) return;
     fetch("/api/auth/me")
       .then((res) => {
         if (!res.ok) throw new Error("Not authenticated");
