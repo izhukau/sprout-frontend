@@ -816,11 +816,25 @@ export function LearnView() {
     isTutorSending ||
     !currentQuestion ||
     (isBackendChatEnabled && (isChatLoading || !chatSessionId));
+  const graphTheme = {
+    bg: "#0A1A0F",
+    panel: "rgba(17,34,20,0.55)",
+    panelMuted: "rgba(17,34,20,0.42)",
+    border: "rgba(46,232,74,0.16)",
+    borderStrong: "rgba(46,232,74,0.28)",
+    textMuted: "rgba(255,255,255,0.58)",
+    accent: "#2EE84A",
+    accentSoft: "#3DBF5A",
+    accentBg: "rgba(46,232,74,0.1)",
+    accentBgStrong: "rgba(46,232,74,0.16)",
+    accentBorder: "rgba(46,232,74,0.3)",
+    accentText: "#BFF8C9",
+  } as const;
 
   return (
     <div
       className="flex h-screen w-screen overflow-hidden"
-      style={{ background: "#080c08" }}
+      style={{ background: graphTheme.bg }}
     >
       {/* ── Card column ───────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -828,15 +842,18 @@ export function LearnView() {
         <header
           className="flex shrink-0 items-center justify-between border-b px-8 py-4"
           style={{
-            borderColor: "rgba(255,255,255,0.08)",
-            background: "rgba(255,255,255,0.03)",
+            borderColor: graphTheme.border,
+            background: graphTheme.panel,
           }}
         >
           <div className="flex items-center gap-3">
-            <Sparkles className="h-4 w-4" style={{ color: "#ffa025" }} />
+            <Sparkles
+              className="h-4 w-4"
+              style={{ color: graphTheme.accent }}
+            />
             <span
               className="text-sm font-bold uppercase tracking-widest"
-              style={{ color: "#ffa025" }}
+              style={{ color: graphTheme.accentSoft }}
             >
               {isBackendChatEnabled
                 ? (nodeTitle ?? "Subconcept")
@@ -859,7 +876,7 @@ export function LearnView() {
                   className="h-full rounded-full transition-all duration-700"
                   style={{
                     width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
-                    background: "#ffa025",
+                    background: graphTheme.accent,
                   }}
                 />
               </div>
@@ -878,15 +895,15 @@ export function LearnView() {
                       key={chunk.id}
                       className="rounded-2xl border p-6"
                       style={{
-                        borderColor: "rgba(255,255,255,0.12)",
-                        background: "rgba(255,255,255,0.03)",
+                        borderColor: graphTheme.border,
+                        background: graphTheme.panel,
                       }}
                     >
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <BookOpen
                             className="h-4 w-4"
-                            style={{ color: "#ffa025" }}
+                            style={{ color: graphTheme.accent }}
                           />
                           <h2 className="text-sm font-semibold tracking-wide text-white/90 uppercase">
                             Chunk {chunk.index + 1}
@@ -896,9 +913,9 @@ export function LearnView() {
                           <span
                             className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase"
                             style={{
-                              background: "rgba(255,160,37,0.14)",
-                              border: "1px solid rgba(255,160,37,0.32)",
-                              color: "#ffd8a8",
+                              background: graphTheme.accentBgStrong,
+                              border: `1px solid ${graphTheme.accentBorder}`,
+                              color: graphTheme.accentText,
                             }}
                           >
                             Current
@@ -917,11 +934,14 @@ export function LearnView() {
                         <div
                           className="mt-4 rounded-xl border px-4 py-3"
                           style={{
-                            borderColor: "rgba(255,160,37,0.3)",
-                            background: "rgba(255,160,37,0.08)",
+                            borderColor: graphTheme.accentBorder,
+                            background: graphTheme.accentBg,
                           }}
                         >
-                          <div className="mb-1 text-xs font-semibold tracking-wide text-[#ffd8a8] uppercase">
+                          <div
+                            className="mb-1 text-xs font-semibold tracking-wide uppercase"
+                            style={{ color: graphTheme.accentText }}
+                          >
                             Question
                           </div>
                           <div
@@ -955,7 +975,7 @@ export function LearnView() {
                                 disabled={isAnswerSendDisabled}
                                 className="rounded-lg px-3 py-2 text-sm font-semibold transition-all disabled:opacity-40"
                                 style={{
-                                  background: "#ffa025",
+                                  background: graphTheme.accent,
                                   color: "#070d06",
                                 }}
                               >
@@ -972,9 +992,9 @@ export function LearnView() {
                 <div
                   className="rounded-2xl border p-8 text-sm"
                   style={{
-                    borderColor: "rgba(255,255,255,0.12)",
-                    background: "rgba(255,255,255,0.03)",
-                    color: "rgba(255,255,255,0.55)",
+                    borderColor: graphTheme.border,
+                    background: graphTheme.panel,
+                    color: graphTheme.textMuted,
                   }}
                 >
                   Preparing first chunk...
@@ -983,11 +1003,14 @@ export function LearnView() {
                 <div
                   className="rounded-2xl border p-8"
                   style={{
-                    borderColor: "rgba(255,255,255,0.12)",
-                    background: "rgba(255,255,255,0.03)",
+                    borderColor: graphTheme.border,
+                    background: graphTheme.panel,
                   }}
                 >
-                  <div className="mb-3 text-xs font-semibold tracking-wide text-[#ffd8a8] uppercase">
+                  <div
+                    className="mb-3 text-xs font-semibold tracking-wide uppercase"
+                    style={{ color: graphTheme.accentText }}
+                  >
                     Overview
                   </div>
                   <div
@@ -1178,23 +1201,23 @@ export function LearnView() {
       <aside
         className="flex w-[400px] shrink-0 flex-col border-l"
         style={{
-          borderColor: "rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.02)",
+          borderColor: graphTheme.border,
+          background: graphTheme.panelMuted,
         }}
       >
         {/* Chat header */}
         <div
           className="flex shrink-0 items-center gap-3 border-b px-5 py-4"
-          style={{ borderColor: "rgba(255,255,255,0.08)" }}
+          style={{ borderColor: graphTheme.border }}
         >
           <div
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
             style={{
-              background: "rgba(255,160,37,0.12)",
-              border: "1px solid rgba(255,160,37,0.25)",
+              background: graphTheme.accentBg,
+              border: `1px solid ${graphTheme.accentBorder}`,
             }}
           >
-            <Bot className="h-4 w-4" style={{ color: "#ffa025" }} />
+            <Bot className="h-4 w-4" style={{ color: graphTheme.accent }} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-white">
@@ -1229,9 +1252,9 @@ export function LearnView() {
             <div
               className="rounded-xl border px-3 py-2 text-xs"
               style={{
-                borderColor: "rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.03)",
-                color: "rgba(255,255,255,0.55)",
+                borderColor: graphTheme.border,
+                background: graphTheme.panel,
+                color: graphTheme.textMuted,
               }}
             >
               Connecting to tutor...
@@ -1256,9 +1279,9 @@ export function LearnView() {
               <div
                 className="rounded-xl border px-3 py-2 text-xs"
                 style={{
-                  borderColor: "rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.03)",
-                  color: "rgba(255,255,255,0.55)",
+                  borderColor: graphTheme.border,
+                  background: graphTheme.panel,
+                  color: graphTheme.textMuted,
                 }}
               >
                 Ask your first clarification about the current chunk.
@@ -1290,8 +1313,8 @@ export function LearnView() {
                       isClickable && "cursor-pointer hover:opacity-80",
                     )}
                     style={{
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "rgba(17,34,20,0.8)",
+                      border: `1px solid ${graphTheme.border}`,
                       color:
                         msg.role === "ai"
                           ? "rgba(255,255,255,0.6)"
@@ -1313,12 +1336,12 @@ export function LearnView() {
                   style={{
                     background:
                       msg.role === "ai"
-                        ? "rgba(255,255,255,0.06)"
-                        : "rgba(255,160,37,0.12)",
+                        ? "rgba(17,34,20,0.8)"
+                        : graphTheme.accentBg,
                     border:
                       msg.role === "ai"
-                        ? "1px solid rgba(255,255,255,0.1)"
-                        : "1px solid rgba(255,160,37,0.28)",
+                        ? `1px solid ${graphTheme.border}`
+                        : `1px solid ${graphTheme.accentBorder}`,
                     color:
                       msg.role === "ai"
                         ? "rgba(255,255,255,0.88)"
@@ -1336,7 +1359,7 @@ export function LearnView() {
         {/* Input */}
         <div
           className="shrink-0 border-t p-4"
-          style={{ borderColor: "rgba(255,255,255,0.08)" }}
+          style={{ borderColor: graphTheme.border }}
         >
           {!isBackendChatEnabled && !isFinished && activeCard && (
             <div
@@ -1346,7 +1369,7 @@ export function LearnView() {
               <span>Asking about</span>
               <span
                 className="max-w-[220px] truncate font-medium"
-                style={{ color: "#ffa025" }}
+                style={{ color: graphTheme.accent }}
               >
                 Card {activeIndex + 1} · {activeCard.title}
               </span>
@@ -1366,21 +1389,21 @@ export function LearnView() {
               disabled={isChatLoading || isTutorSending}
               className="flex-1 rounded-xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/20 transition-colors"
               style={{
-                background: "rgba(255,255,255,0.05)",
-                border: "1px solid rgba(255,255,255,0.1)",
+                background: "rgba(17,34,20,0.78)",
+                border: `1px solid ${graphTheme.border}`,
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = "rgba(255,160,37,0.45)";
+                e.currentTarget.style.borderColor = graphTheme.accentBorder;
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
+                e.currentTarget.style.borderColor = graphTheme.border;
               }}
             />
             <button
               type="submit"
               disabled={isClarificationSendDisabled}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-25 hover:opacity-85 active:scale-95"
-              style={{ background: "#ffa025" }}
+              style={{ background: graphTheme.accent }}
             >
               {isTutorSending ? (
                 <Loader2
