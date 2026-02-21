@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
+    "@elevenlabs/react": "^0.14.0",
     "@excalidraw/excalidraw": "^0.18.0",
     "@xyflow/react": "^12.10.1",
     "class-variance-authority": "^0.7.1",

@@ -1,5 +1,6 @@
 "use client";
 
+import { useConversation } from "@elevenlabs/react";
 import {
   BookOpen,
   Bot,
@@ -13,8 +14,11 @@ import {
   Loader2,
   Lock,
   Mic,
+  MicOff,
   PenLine,
+  PhoneOff,
   Play,
+  Radio,
   Send,
   Sparkles,
   Square,
@@ -30,6 +34,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ExcalidrawBoard } from "@/components/excalidraw-board";
+import { SproutAvatar } from "@/components/sprout-avatar";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -316,6 +321,10 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
+const AGENT_ID = "agent_3701kj1081rteq89xzckat5w1xdt";
+
+const ASSESSMENT_TYPES = new Set<LearnCard["type"]>(["quiz", "code", "text", "draw"]);
+
 export function LearnView() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [quizSelected, setQuizSelected] = useState<Record<string, number>>({});
@@ -333,12 +342,104 @@ export function LearnView() {
   );
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
+  const [voiceTutorEnabled, setVoiceTutorEnabled] = useState(false);
+  const [hintsShown, setHintsShown] = useState<Set<string>>(new Set());
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeCard = CARDS[activeIndex] as LearnCard | undefined;
   const isFinished = activeIndex >= CARDS.length;
+
+  // ── ElevenLabs context builder ──────────────────────────────────────────────
+
+  const buildAgentContext = useCallback((): string => {
+    const completedCards = CARDS.slice(0, activeIndex);
+    const currentCard = activeCard;
+    const mode = currentCard && ASSESSMENT_TYPES.has(currentCard.type)
+      ? "assessment"
+      : "instruction";
+
+    const hintCards = [...hintsShown]
+      .map((id) => CARDS.find((c) => c.id === id)?.title)
+      .filter(Boolean);
+
+    // Serialise a single card's full content
+    const serialiseCard = (c: LearnCard, index: number): string => {
+      let s = `[Card ${index + 1}] ${c.title} — ${c.topic} (${c.type})\n`;
+      if (c.type === "summary") {
+        s += `${c.content}\nKey points: ${c.keyPoints.join(". ")}\n`;
+      } else if (c.type === "quiz") {
+        s += `Question: ${c.question}\nOptions: ${c.options.map((o, i) => `${i + 1}. ${o}`).join(" | ")}\nCorrect: option ${c.correctIndex + 1} — ${c.options[c.correctIndex]}\nExplanation: ${c.explanation}\n`;
+        const selected = quizSelected[c.id];
+        if (quizSubmitted.has(c.id) && selected !== undefined) {
+          const correct = selected === c.correctIndex;
+          s += `Student answered: option ${selected + 1} — ${correct ? "CORRECT" : "INCORRECT"}\n`;
+        }
+      } else if (c.type === "code") {
+        s += `Task: ${c.prompt}\n`;
+        if (hintsShown.has(c.id)) s += `Hint shown: ${c.hint}\n`;
+      } else if (c.type === "text") {
+        s += `Prompt: ${c.prompt}\nGuiding questions: ${c.guidingQuestions.join(". ")}\n`;
+      } else if (c.type === "draw") {
+        s += `Task: ${c.prompt}\n`;
+      } else if (c.type === "voice") {
+        s += `Topic explanation: ${c.script}\n`;
+      }
+      return s;
+    };
+
+    const studiedCards = CARDS.slice(0, activeIndex + 1);
+    const cardDump = studiedCards.map((c, i) => serialiseCard(c, i)).join("\n");
+
+    const ctx = `CURRENT LEARNING STATE
+Topic: Machine Learning Fundamentals
+Mode: ${mode}
+Progress: ${Math.min(activeIndex, CARDS.length)} of ${CARDS.length} cards completed
+Hint Used: ${hintCards.length > 0 ? `Yes — ${hintCards.join(", ")}` : "No"}
+Attempt Count: 1
+Was Correct: ${quizSubmitted.size > 0 ? [...quizSubmitted].map((id) => { const c = CARDS.find((x) => x.id === id) as QuizCard | undefined; if (!c || c.type !== "quiz") return null; return quizSelected[id] === c.correctIndex ? "Yes" : "No"; }).filter(Boolean).join(", ") : "N/A"}
+Error Type: N/A
+
+All cards the student has studied so far (read and use this material to answer questions):
+${cardDump}
+END STATE`;
+
+    return ctx;
+  }, [activeIndex, activeCard, quizSelected, quizSubmitted, hintsShown]);
+
+  // ── ElevenLabs conversation ─────────────────────────────────────────────────
+
+  const conversation = useConversation({
+    onConnect: () => {},
+    onDisconnect: () => {},
+    onError: (err) => console.error("ElevenLabs error:", err instanceof Event ? err.type : err),
+  });
+
+  const startVoiceTutor = useCallback(async () => {
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+    await conversation.startSession({
+      agentId: AGENT_ID,
+      connectionType: "websocket",
+    });
+    setVoiceTutorEnabled(true);
+  }, [conversation]);
+
+  const stopVoiceTutor = useCallback(async () => {
+    await conversation.endSession();
+    setVoiceTutorEnabled(false);
+  }, [conversation]);
+
+  // Inject context once connected, and re-send when learning state changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
+  useEffect(() => {
+    if (conversation.status !== "connected") return;
+    // Small delay so the agent can send its greeting before we inject context.
+    const timer = setTimeout(() => {
+      conversation.sendContextualUpdate(buildAgentContext());
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [conversation.status, activeIndex, quizSubmitted, hintsShown]);
 
   const scrollToCard = useCallback((cardId: string) => {
     cardRefs.current[cardId]?.scrollIntoView({
@@ -427,25 +528,50 @@ export function LearnView() {
               Machine Learning Fundamentals
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span
-              className="text-sm font-medium"
-              style={{ color: "rgba(255,255,255,0.4)" }}
-            >
-              {Math.min(activeIndex, CARDS.length)} / {CARDS.length}
-            </span>
-            <div
-              className="h-2 w-32 overflow-hidden rounded-full"
-              style={{ background: "rgba(255,255,255,0.1)" }}
-            >
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span
+                className="text-sm font-medium"
+                style={{ color: "rgba(255,255,255,0.4)" }}
+              >
+                {Math.min(activeIndex, CARDS.length)} / {CARDS.length}
+              </span>
               <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{
-                  width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
-                  background: "#ffa025",
-                }}
-              />
+                className="h-2 w-32 overflow-hidden rounded-full"
+                style={{ background: "rgba(255,255,255,0.1)" }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{
+                    width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
+                    background: "#ffa025",
+                  }}
+                />
+              </div>
             </div>
+            {/* Voice tutor toggle */}
+            <button
+              type="button"
+              onClick={voiceTutorEnabled ? stopVoiceTutor : startVoiceTutor}
+              className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all hover:opacity-85 active:scale-95"
+              style={
+                voiceTutorEnabled
+                  ? { background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }
+                  : { background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.25)", color: "#34d399" }
+              }
+            >
+              {voiceTutorEnabled ? (
+                <>
+                  <PhoneOff className="h-3.5 w-3.5" />
+                  End Voice Tutor
+                </>
+              ) : (
+                <>
+                  <Radio className="h-3.5 w-3.5" />
+                  Voice Tutor
+                </>
+              )}
+            </button>
           </div>
         </header>
 
@@ -500,11 +626,15 @@ export function LearnView() {
                           : card.starterCode
                       }
                       isSubmitted={codeSubmitted.has(card.id)}
+                      showHint={hintsShown.has(card.id)}
                       onChange={(v) =>
                         setCodeValues((p) => ({ ...p, [card.id]: v }))
                       }
                       onSubmit={() =>
                         setCodeSubmitted((p) => new Set([...p, card.id]))
+                      }
+                      onShowHint={() =>
+                        setHintsShown((p) => new Set([...p, card.id]))
                       }
                       onContinue={handleContinue}
                     />
@@ -619,7 +749,17 @@ export function LearnView() {
         </div>
       </div>
 
-      {/* ── AI Chat ───────────────────────────────────────── */}
+      {/* ── Right sidebar: Voice Agent or AI Chat ─────────── */}
+      {voiceTutorEnabled ? (
+        <VoiceAgentPanel
+          status={conversation.status}
+          isSpeaking={conversation.isSpeaking}
+          activeCard={activeCard}
+          activeIndex={activeIndex}
+          totalCards={CARDS.length}
+          onStop={stopVoiceTutor}
+        />
+      ) : (
       <aside
         className="flex w-[400px] shrink-0 flex-col border-l"
         style={{
@@ -784,6 +924,7 @@ export function LearnView() {
           </form>
         </div>
       </aside>
+      )}
     </div>
   );
 }
@@ -1188,8 +1329,10 @@ function CodeCardUI({
   state,
   value,
   isSubmitted,
+  showHint,
   onChange,
   onSubmit,
+  onShowHint,
   onContinue,
 }: {
   card: CodeCard;
@@ -1198,11 +1341,12 @@ function CodeCardUI({
   state: "completed" | "active";
   value: string;
   isSubmitted: boolean;
+  showHint: boolean;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onShowHint: () => void;
   onContinue: () => void;
 }) {
-  const [showHint, setShowHint] = useState(false);
 
   return (
     <CardShell state={state}>
@@ -1276,7 +1420,7 @@ function CodeCardUI({
         {!showHint ? (
           <button
             type="button"
-            onClick={() => setShowHint(true)}
+            onClick={onShowHint}
             className="text-sm font-medium transition-opacity hover:opacity-70"
             style={{ color: "rgba(96,165,250,0.8)" }}
           >
@@ -2107,6 +2251,184 @@ function DrawCardUI({
           document.body,
         )}
     </CardShell>
+  );
+}
+
+// ── Voice Agent Panel ─────────────────────────────────────────────────────────
+
+function VoiceAgentPanel({
+  status,
+  isSpeaking,
+  activeCard,
+  activeIndex,
+  totalCards,
+  onStop,
+}: {
+  status: string;
+  isSpeaking: boolean;
+  activeCard: LearnCard | undefined;
+  activeIndex: number;
+  totalCards: number;
+  onStop: () => void;
+}) {
+  const isConnected = status === "connected";
+  const isConnecting = status === "connecting";
+
+  return (
+    <aside
+      className="flex w-[400px] shrink-0 flex-col border-l"
+      style={{
+        borderColor: "rgba(52,211,153,0.15)",
+        background: "rgba(52,211,153,0.02)",
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex shrink-0 items-center gap-3 border-b px-5 py-4"
+        style={{ borderColor: "rgba(52,211,153,0.12)" }}
+      >
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+          style={{
+            background: isConnected ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.06)",
+            border: `1px solid ${isConnected ? "rgba(52,211,153,0.35)" : "rgba(255,255,255,0.12)"}`,
+          }}
+        >
+          <Radio
+            className={cn("h-4 w-4", isConnected && "animate-pulse")}
+            style={{ color: isConnected ? "#34d399" : "rgba(255,255,255,0.4)" }}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-white">Voice Tutor</div>
+          <div className="text-xs" style={{ color: "rgba(255,255,255,0.38)" }}>
+            {isConnecting
+              ? "Connecting…"
+              : isConnected
+                ? isSpeaking
+                  ? "Agent is speaking"
+                  : "Listening to you"
+                : "Disconnected"}
+          </div>
+        </div>
+        {!isConnected && (
+          <div
+            className="shrink-0 rounded-full px-3 py-1 text-xs font-bold"
+            style={{
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "rgba(255,255,255,0.5)",
+            }}
+          >
+            {isConnecting ? "Connecting…" : "Off"}
+          </div>
+        )}
+      </div>
+
+      {/* Main content area */}
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8">
+        {/* Sprout avatar */}
+        <div className="flex flex-col items-center gap-2">
+          <SproutAvatar
+            isSpeaking={isConnected && isSpeaking}
+            isListening={isConnected && !isSpeaking}
+            size={200}
+          />
+
+          <div className="text-center">
+            <div
+              className="text-base font-bold"
+              style={{
+                color: isConnected ? "#34d399" : "rgba(255,255,255,0.3)",
+              }}
+            >
+              {isConnecting
+                ? "Starting session…"
+                : isConnected
+                  ? isSpeaking
+                    ? "AI Tutor is speaking"
+                    : "Speak now"
+                  : "Voice tutor ended"}
+            </div>
+            <div
+              className="mt-1 text-sm"
+              style={{ color: "rgba(255,255,255,0.3)" }}
+            >
+              {isConnected
+                ? "Ask any question about the material"
+                : "Click Voice Tutor to start"}
+            </div>
+          </div>
+        </div>
+
+        {/* Current card context badge */}
+        {activeCard && isConnected && (
+          <div
+            className="w-full rounded-xl p-4"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.09)",
+            }}
+          >
+            <div
+              className="mb-2 text-xs font-bold uppercase tracking-widest"
+              style={{ color: "rgba(255,255,255,0.3)" }}
+            >
+              Current context
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span
+                className="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wide"
+                style={{
+                  background: TYPE_META[activeCard.type].bg,
+                  border: `1px solid ${TYPE_META[activeCard.type].border}`,
+                  color: TYPE_META[activeCard.type].color,
+                }}
+              >
+                {TYPE_META[activeCard.type].label}
+              </span>
+              <span
+                className="truncate text-sm font-medium text-white"
+              >
+                {activeCard.title}
+              </span>
+              <span
+                className="ml-auto shrink-0 font-mono text-xs"
+                style={{ color: "rgba(255,255,255,0.25)" }}
+              >
+                {activeIndex + 1}/{totalCards}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Stop button */}
+        <button
+          type="button"
+          onClick={onStop}
+          className="flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all hover:opacity-85 active:scale-95"
+          style={{
+            background: "rgba(239,68,68,0.12)",
+            border: "1px solid rgba(239,68,68,0.28)",
+            color: "#f87171",
+          }}
+        >
+          <PhoneOff className="h-4 w-4" />
+          End Session
+        </button>
+      </div>
+
+      {/* Footer note */}
+      <div
+        className="shrink-0 border-t px-5 py-4 text-center text-xs"
+        style={{
+          borderColor: "rgba(52,211,153,0.1)",
+          color: "rgba(255,255,255,0.22)",
+        }}
+      >
+        Powered by ElevenLabs · WebSocket
+      </div>
+    </aside>
   );
 }
 
