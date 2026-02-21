@@ -563,10 +563,12 @@ export function GraphViewContainer() {
   const handleForceNodeClick = useCallback(
     (nodeId: string) => {
       const node = graphNodes.find((candidate) => candidate.id === nodeId);
-      if (!node || node.data.variant === "root") return;
+      if (!node) return;
 
       if (nodeId === focusedNodeId) {
-        if (node.data.variant === "concept" && node.data.branchId) {
+        if (node.data.variant === "root" && node.data.branchId) {
+          void handleOpenBranch(node.data.branchId);
+        } else if (node.data.variant === "concept" && node.data.branchId) {
           void handleOpenBranch(node.data.branchId);
           setExpandedNodeId(nodeId);
         } else if (
