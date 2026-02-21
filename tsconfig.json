@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
+      "@/*": ["./src/*"]
     },
     "moduleResolution": "node",
     "resolveJsonModule": true,
@@ -19,9 +19,9 @@
     "jsx": "react-jsx",
     "plugins": [
       {
-        "name": "next",
-      },
-    ],
+        "name": "next"
+      }
+    ]
   },
   "include": [
     "next-env.d.ts",
@@ -29,7 +29,7 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts",
     "**/*.ts",
-    "**/*.tsx",
+    "**/*.tsx"
   ],
-  "exclude": ["node_modules"],
+  "exclude": ["node_modules"]
 }
