@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "../../node_modules/tw-animate-css/dist/tw-animate.css";
 @import "shadcn/tailwind.css";
+@import "../../node_modules/@excalidraw/excalidraw/dist/prod/index.css";
 
 @custom-variant dark (&:is(.dark *));
 

@@ -5,6 +5,7 @@ const backendOrigin =
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  transpilePackages: ["@excalidraw/excalidraw"],
   async rewrites() {
     return [
       {
