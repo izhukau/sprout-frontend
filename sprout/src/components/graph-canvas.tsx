@@ -5,111 +5,125 @@ import {
   Controls,
   type Edge,
   MiniMap,
-  type Node,
   ReactFlow,
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { getLayoutedElements } from "@/lib/layout";
+import { graphNodeTypes, type GraphNode } from "@/components/graph-node";
 
 // Mock: "Find the acceleration of a 5kg block on a 30° incline with friction μ=0.2"
-const initialNodes: Node[] = [
+const initialNodes: GraphNode[] = [
   // Main problem
   {
     id: "problem",
-    type: "input",
-    data: { label: "Find acceleration of block on incline" },
-    position: { x: 400, y: 0 },
+    type: "graph",
+    data: { label: "Find acceleration of block on incline", variant: "problem" },
+    position: { x: 0, y: 0 },
   },
   // Solution steps (vertical spine)
   {
     id: "step-fbd",
-    data: { label: "Step 1: Draw free-body diagram" },
-    position: { x: 400, y: 120 },
+    type: "graph",
+    data: { label: "Step 1: Draw free-body diagram", variant: "step" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "step-decompose",
-    data: { label: "Step 2: Decompose forces along incline" },
-    position: { x: 400, y: 240 },
+    type: "graph",
+    data: { label: "Step 2: Decompose forces along incline", variant: "step" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "step-normal",
-    data: { label: "Step 3: Find normal force N = mg·cos θ" },
-    position: { x: 400, y: 360 },
+    type: "graph",
+    data: { label: "Step 3: Find normal force N = mg·cos θ", variant: "step" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "step-friction",
-    data: { label: "Step 4: Find friction f = μN" },
-    position: { x: 400, y: 480 },
+    type: "graph",
+    data: { label: "Step 4: Find friction f = μN", variant: "step" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "step-net",
-    data: { label: "Step 5: Net force = mg·sin θ − f" },
-    position: { x: 400, y: 600 },
+    type: "graph",
+    data: { label: "Step 5: Net force = mg·sin θ − f", variant: "step" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "step-newton",
-    data: { label: "Step 6: Apply F = ma, solve for a" },
-    position: { x: 400, y: 720 },
+    type: "graph",
+    data: { label: "Step 6: Apply F = ma, solve for a", variant: "step" },
+    position: { x: 0, y: 0 },
   },
 
   // Prereq branch off Step 2: trig knowledge gap
   {
     id: "prereq-trig",
-    data: { label: "Prereq: sin & cos on right triangles" },
-    position: { x: 750, y: 240 },
+    type: "graph",
+    data: { label: "Prereq: sin & cos on right triangles", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-trig-1",
-    data: { label: "What is a right triangle?" },
-    position: { x: 750, y: 360 },
+    type: "graph",
+    data: { label: "What is a right triangle?", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-trig-2",
-    data: { label: "SOH-CAH-TOA definitions" },
-    position: { x: 750, y: 480 },
+    type: "graph",
+    data: { label: "SOH-CAH-TOA definitions", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-trig-3",
-    type: "output",
-    data: { label: "Practice: find sin 30° and cos 30°" },
-    position: { x: 750, y: 600 },
+    type: "graph",
+    data: { label: "Practice: find sin 30° and cos 30°", variant: "practice" },
+    position: { x: 0, y: 0 },
   },
 
   // Prereq branch off Step 4: friction knowledge gap
   {
     id: "prereq-friction",
-    data: { label: "Prereq: Friction" },
-    position: { x: 50, y: 480 },
+    type: "graph",
+    data: { label: "Prereq: Friction", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-friction-1",
-    data: { label: "What causes friction?" },
-    position: { x: 50, y: 600 },
+    type: "graph",
+    data: { label: "What causes friction?", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-friction-2",
-    type: "output",
-    data: { label: "Practice: compute f = μN given values" },
-    position: { x: 50, y: 720 },
+    type: "graph",
+    data: { label: "Practice: compute f = μN given values", variant: "practice" },
+    position: { x: 0, y: 0 },
   },
 
   // Prereq branch off Step 6: Newton's 2nd law gap
   {
     id: "prereq-newton",
-    data: { label: "Prereq: Newton's 2nd Law" },
-    position: { x: 750, y: 720 },
+    type: "graph",
+    data: { label: "Prereq: Newton's 2nd Law", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-newton-1",
-    data: { label: "F = ma: what each variable means" },
-    position: { x: 750, y: 840 },
+    type: "graph",
+    data: { label: "F = ma: what each variable means", variant: "prereq" },
+    position: { x: 0, y: 0 },
   },
   {
     id: "prereq-newton-2",
-    type: "output",
-    data: { label: "Practice: solve a = F/m" },
-    position: { x: 750, y: 960 },
+    type: "graph",
+    data: { label: "Practice: solve a = F/m", variant: "practice" },
+    position: { x: 0, y: 0 },
   },
 ];
 
@@ -139,9 +153,14 @@ const initialEdges: Edge[] = [
   { id: "e-newton-2", source: "prereq-newton-1", target: "prereq-newton-2", style: { strokeDasharray: "5,5" } },
 ];
 
+const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+  initialNodes,
+  initialEdges,
+);
+
 export default function GraphCanvas() {
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, , onNodesChange] = useNodesState(layoutedNodes);
+  const [edges, , onEdgesChange] = useEdgesState(layoutedEdges);
 
   return (
     <div className="h-screen w-screen">
@@ -150,6 +169,7 @@ export default function GraphCanvas() {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        nodeTypes={graphNodeTypes}
         fitView
       >
         <Background />
