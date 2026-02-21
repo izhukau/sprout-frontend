@@ -3,6 +3,7 @@
 import {
   Background,
   Controls,
+  type Edge,
   MiniMap,
   type Node,
   ReactFlow,
@@ -39,6 +40,7 @@ function minimapNodeColor(node: GraphNode): string {
 
 type GraphCanvasProps = {
   nodes: GraphNode[];
+  edges?: Edge[];
   onNodeClick?: (nodeId: string) => void;
   expandedNodeId?: string | null;
   onOpenConcept?: (conceptId: string) => void;
@@ -47,13 +49,14 @@ type GraphCanvasProps = {
 
 export default function GraphCanvas({
   nodes: inputNodes,
+  edges: inputEdges,
   onNodeClick,
   expandedNodeId,
   onOpenConcept,
   onPaneClick,
 }: GraphCanvasProps) {
   const { layoutedNodes, layoutedEdges } = useMemo(() => {
-    const initialEdges = buildEdgesFromNodes(inputNodes);
+    const initialEdges = inputEdges ?? buildEdgesFromNodes(inputNodes);
 
     // Derive frontier: edges from completed → not-completed nodes
     const nodeCompletionMap = new Map(
@@ -84,7 +87,7 @@ export default function GraphCanvas({
 
     const result = getLayoutedElements(nodesWithNext, styledEdges);
     return { layoutedNodes: result.nodes, layoutedEdges: result.edges };
-  }, [inputNodes]);
+  }, [inputNodes, inputEdges]);
 
   const nodesWithExpansion = useMemo(() => {
     const EXPANSION_HEIGHT = 160;

@@ -2,39 +2,30 @@
 
 import { forceX, forceY } from "d3-force";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import type { GraphNode } from "@/components/graph-node";
+import type { BackendBranch } from "@/lib/backend-api";
 import type { ForceNode } from "@/lib/graph-utils";
 import { buildBranchColorMap, toForceGraphData } from "@/lib/graph-utils";
-import { mockBranches, mockNodes } from "@/lib/mock-data";
 
 const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), {
   ssr: false,
 });
 
-// Branch cluster positions — evenly spaced around origin
-const branchCenters = new Map<string, { x: number; y: number }>();
-mockBranches.forEach((branch, i) => {
-  const angle = (2 * Math.PI * i) / mockBranches.length - Math.PI / 2;
-  const radius = 200;
-  branchCenters.set(branch.id, {
-    x: Math.cos(angle) * radius,
-    y: Math.sin(angle) * radius,
-  });
-});
-
-const graphData = toForceGraphData(mockNodes);
-
-const BRANCH_COLORS = buildBranchColorMap(mockBranches);
 const ROOT_COLOR = "#ffffff";
 
 type ForceGraphViewProps = {
+  branches: BackendBranch[];
+  nodes: GraphNode[];
   highlightedBranchId: string | null;
   focusedNodeId: string | null;
   onNodeClick: (nodeId: string) => void;
 };
 
 export function ForceGraphView({
+  branches,
+  nodes,
   highlightedBranchId,
   focusedNodeId,
   onNodeClick,
@@ -45,6 +36,22 @@ export function ForceGraphView({
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const focusNodeRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const initialFitDone = useRef(false);
+  const graphData = useMemo(() => toForceGraphData(nodes), [nodes]);
+  const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
+  const branchCenters = useMemo(() => {
+    const centers = new Map<string, { x: number; y: number }>();
+    if (!branches.length) return centers;
+
+    branches.forEach((branch, i) => {
+      const angle = (2 * Math.PI * i) / branches.length - Math.PI / 2;
+      const radius = 200;
+      centers.set(branch.id, {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+      });
+    });
+    return centers;
+  }, [branches]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -60,7 +67,7 @@ export function ForceGraphView({
     return () => ro.disconnect();
   }, []);
 
-  // Apply branch clustering forces once graph is mounted
+  // Apply branch clustering forces whenever graph topology changes.
   useEffect(() => {
     const fg = graphRef.current;
     if (!fg) return;
@@ -87,7 +94,8 @@ export function ForceGraphView({
     fg.d3Force("link")?.distance(40);
 
     fg.d3ReheatSimulation();
-  }, []);
+    initialFitDone.current = false;
+  }, [graphData, branchCenters]);
 
   // Zoom to highlighted branch, centering on the clicked node
   useEffect(() => {
@@ -124,7 +132,7 @@ export function ForceGraphView({
       { x: cx, y: cy, z: cz },
       600,
     );
-  }, [highlightedBranchId]);
+  }, [highlightedBranchId, graphData.nodes]);
 
   // Reset zoom when no branch is highlighted
   useEffect(() => {
@@ -199,11 +207,11 @@ export function ForceGraphView({
         variant === "root";
 
       const radius = variant === "root" ? 3 : variant === "concept" ? 2 : 1;
-      const branchColors = branchId ? BRANCH_COLORS.get(branchId) : null;
+      const nodeBranchColors = branchId ? branchColors.get(branchId) : null;
       const color =
         variant === "root"
           ? ROOT_COLOR
-          : (branchColors?.[variant] ?? ROOT_COLOR);
+          : (nodeBranchColors?.[variant] ?? ROOT_COLOR);
       const opacity = isHighlighted ? (completed ? 1 : 0.6) : 0.15;
 
       const isFocused = node.id === focusedNodeId;
@@ -249,7 +257,7 @@ export function ForceGraphView({
 
       return mesh;
     },
-    [highlightedBranchId, focusedNodeId],
+    [highlightedBranchId, focusedNodeId, branchColors],
   );
 
   const linkColor = useCallback(

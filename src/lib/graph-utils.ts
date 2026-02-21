@@ -1,12 +1,15 @@
 import type { Edge } from "@xyflow/react";
 import type { GraphNode } from "@/components/graph-node";
-import type { Branch } from "@/lib/mock-data";
+
+type BranchLike = {
+  id: string;
+};
 
 export type BranchColors = { concept: string; subconcept: string };
 
 /** Build a stable color map for branches using golden-angle hue spacing */
 export function buildBranchColorMap(
-  branches: Branch[],
+  branches: BranchLike[],
 ): Map<string, BranchColors> {
   const map = new Map<string, BranchColors>();
   branches.forEach((branch, i) => {

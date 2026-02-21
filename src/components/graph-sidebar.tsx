@@ -1,14 +1,13 @@
 "use client";
 
 import { ArrowLeft, ArrowRight, GitBranch } from "lucide-react";
+import { useMemo } from "react";
 import type { GraphNode } from "@/components/graph-node";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { buildBranchColorMap } from "@/lib/graph-utils";
-import { type Branch, mockBranches } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
-
-const BRANCH_COLORS = buildBranchColorMap(mockBranches);
+import type { BackendBranch } from "@/lib/backend-api";
 
 export type GraphView =
   | { level: "global" }
@@ -17,7 +16,7 @@ export type GraphView =
 
 type GraphSidebarProps = {
   view: GraphView;
-  branches: Branch[];
+  branches: BackendBranch[];
   nodes: GraphNode[];
   highlightedBranchId: string | null;
   onSelectBranch: (branchId: string) => void;
@@ -40,6 +39,8 @@ export function GraphSidebar({
   onSelectSubconcept,
   onBack,
 }: GraphSidebarProps) {
+  const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
+
   return (
     <aside className="absolute left-0 top-0 z-10 flex h-full w-72 flex-col border-r border-[rgba(46,232,74,0.1)] bg-[rgba(10,26,15,0.85)] backdrop-blur-xl">
       {/* Header */}
@@ -69,6 +70,7 @@ export function GraphSidebar({
           {view.level === "global" && (
             <GlobalLevel
               branches={branches}
+              branchColors={branchColors}
               highlightedBranchId={highlightedBranchId}
               onSelectBranch={onSelectBranch}
               onOpenBranch={onOpenBranch}
@@ -97,11 +99,13 @@ export function GraphSidebar({
 
 function GlobalLevel({
   branches,
+  branchColors,
   highlightedBranchId,
   onSelectBranch,
   onOpenBranch,
 }: {
-  branches: Branch[];
+  branches: BackendBranch[];
+  branchColors: Map<string, { concept: string; subconcept: string }>;
   highlightedBranchId: string | null;
   onSelectBranch: (id: string) => void;
   onOpenBranch: (id: string) => void;
@@ -125,7 +129,7 @@ function GlobalLevel({
               <GitBranch
                 className="h-4 w-4 shrink-0 transition-colors"
                 style={{
-                  color: BRANCH_COLORS.get(branch.id)?.concept,
+                  color: branchColors.get(branch.id)?.concept,
                   opacity: isActive ? 1 : 0.5,
                 }}
               />
