@@ -219,6 +219,36 @@ export async function generateSubconcepts(
   });
 }
 
+export async function uploadDocuments(
+  nodeId: string,
+  files: File[],
+): Promise<{ uploaded: { id: string; originalName: string }[] }> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+
+  const response = await fetch(`${API_PREFIX}/api/nodes/${nodeId}/documents`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let message = `Upload failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      // ignore parsing errors
+    }
+    throw new Error(message);
+  }
+
+  return (await response.json()) as {
+    uploaded: { id: string; originalName: string }[];
+  };
+}
+
 export async function listDependencyEdges(
   parentNodeId: string,
   childType?: "concept" | "subconcept",
