@@ -1,14 +1,17 @@
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { cva } from "class-variance-authority";
-import { CheckCircle2, Crosshair, ListOrdered, PenLine } from "lucide-react";
+import { BookOpen, CheckCircle2, Globe, Layers } from "lucide-react";
 import { memo } from "react";
 import { cn } from "@/lib/utils";
 
-type NodeVariant = "problem" | "step" | "practice";
+export type NodeVariant = "root" | "concept" | "subconcept";
 
-type GraphNodeData = {
+export type GraphNodeData = {
   label: string;
   variant: NodeVariant;
+  userId: string;
+  branchId: string | null;
+  parentId: string | null;
   completed?: boolean;
   next?: boolean;
 };
@@ -29,13 +32,13 @@ const nodeVariants = cva(
   {
     variants: {
       variant: {
-        problem: "border-[rgba(46,232,74,0.3)]",
-        step: "border-[rgba(61,191,90,0.2)]",
-        practice: "border-[rgba(0,255,65,0.25)]",
+        root: "border-[rgba(46,232,74,0.4)]",
+        concept: "border-[rgba(61,191,90,0.25)]",
+        subconcept: "border-[rgba(0,255,65,0.15)]",
       },
     },
     defaultVariants: {
-      variant: "step",
+      variant: "subconcept",
     },
   },
 );
@@ -44,9 +47,9 @@ const iconMap: Record<
   NodeVariant,
   { icon: React.ElementType; className: string }
 > = {
-  problem: { icon: Crosshair, className: "text-[#2EE84A]" },
-  step: { icon: ListOrdered, className: "text-[#3DBF5A]" },
-  practice: { icon: PenLine, className: "text-[#00FF41]" },
+  root: { icon: Globe, className: "text-[#2EE84A]" },
+  concept: { icon: BookOpen, className: "text-[#3DBF5A]" },
+  subconcept: { icon: Layers, className: "text-[#00FF41]" },
 };
 
 function GraphNodeComponent({ data, selected }: NodeProps<GraphNode>) {
