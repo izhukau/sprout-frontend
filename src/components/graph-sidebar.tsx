@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, GitBranch } from "lucide-react";
+import { ArrowLeft, ArrowRight, GitBranch, Plus } from "lucide-react";
 import { useMemo } from "react";
 import type { GraphNode } from "@/components/graph-node";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ type GraphSidebarProps = {
   onOpenConcept: (conceptId: string) => void;
   onSelectSubconcept: (subconceptId: string) => void;
   onBack: () => void;
+  onNewBranch: () => void;
 };
 
 export function GraphSidebar({
@@ -38,6 +39,7 @@ export function GraphSidebar({
   onOpenConcept,
   onSelectSubconcept,
   onBack,
+  onNewBranch,
 }: GraphSidebarProps) {
   const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
 
@@ -74,6 +76,7 @@ export function GraphSidebar({
               highlightedBranchId={highlightedBranchId}
               onSelectBranch={onSelectBranch}
               onOpenBranch={onOpenBranch}
+              onNewBranch={onNewBranch}
             />
           )}
           {view.level === "branch" && (
@@ -103,54 +106,67 @@ function GlobalLevel({
   highlightedBranchId,
   onSelectBranch,
   onOpenBranch,
+  onNewBranch,
 }: {
   branches: BackendBranch[];
   branchColors: Map<string, { concept: string; subconcept: string }>;
   highlightedBranchId: string | null;
   onSelectBranch: (id: string) => void;
   onOpenBranch: (id: string) => void;
+  onNewBranch: () => void;
 }) {
   return (
-    <ul className="space-y-1">
-      {branches.map((branch) => {
-        const isActive = highlightedBranchId === branch.id;
-        return (
-          <li key={branch.id}>
-            <button
-              type="button"
-              onClick={() => onSelectBranch(branch.id)}
-              className={cn(
-                "group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all duration-200",
-                isActive
-                  ? "border border-[rgba(46,232,74,0.25)] bg-[rgba(46,232,74,0.08)] text-white"
-                  : "border border-transparent text-white/60 hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
-              )}
-            >
-              <GitBranch
-                className="h-4 w-4 shrink-0 transition-colors"
-                style={{
-                  color: branchColors.get(branch.id)?.concept,
-                  opacity: isActive ? 1 : 0.5,
-                }}
-              />
-              <span className="min-w-0 truncate text-sm">{branch.title}</span>
-            </button>
-
-            {isActive && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onOpenBranch(branch.id)}
-                className="mt-1 ml-7 text-xs font-medium text-[#2EE84A] hover:bg-[rgba(46,232,74,0.1)] hover:text-[#2EE84A]"
+    <div className="flex flex-col gap-3">
+      <ul className="space-y-1">
+        {branches.map((branch) => {
+          const isActive = highlightedBranchId === branch.id;
+          return (
+            <li key={branch.id}>
+              <button
+                type="button"
+                onClick={() => onSelectBranch(branch.id)}
+                className={cn(
+                  "group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all duration-200",
+                  isActive
+                    ? "border border-[rgba(46,232,74,0.25)] bg-[rgba(46,232,74,0.08)] text-white"
+                    : "border border-transparent text-white/60 hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
+                )}
               >
-                Open Branch
-                <ArrowRight className="h-3 w-3" />
-              </Button>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+                <GitBranch
+                  className="h-4 w-4 shrink-0 transition-colors"
+                  style={{
+                    color: branchColors.get(branch.id)?.concept,
+                    opacity: isActive ? 1 : 0.5,
+                  }}
+                />
+                <span className="min-w-0 truncate text-sm">{branch.title}</span>
+              </button>
+
+              {isActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onOpenBranch(branch.id)}
+                  className="mt-1 ml-7 text-xs font-medium text-[#2EE84A] hover:bg-[rgba(46,232,74,0.1)] hover:text-[#2EE84A]"
+                >
+                  Open Branch
+                  <ArrowRight className="h-3 w-3" />
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <button
+        type="button"
+        onClick={onNewBranch}
+        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-[rgba(46,232,74,0.2)] px-3 py-3 text-sm text-white/40 transition-all duration-200 hover:border-[rgba(46,232,74,0.4)] hover:bg-[rgba(46,232,74,0.04)] hover:text-white/70"
+      >
+        <Plus className="h-4 w-4 shrink-0" />
+        <span>New Branch</span>
+      </button>
+    </div>
   );
 }
 

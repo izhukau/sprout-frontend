@@ -7,6 +7,7 @@ import { ForceGraphView } from "@/components/force-graph-view";
 import GraphCanvas from "@/components/graph-canvas";
 import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
+import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import {
   type BackendBranch,
@@ -24,6 +25,7 @@ import {
   listNodes,
   listProgress,
   runTopicAgent,
+  uploadDocuments,
 } from "@/lib/backend-api";
 import {
   getConceptNodesForBranch,
@@ -195,6 +197,7 @@ export function GraphViewContainer() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
 
   const branchRootByBranchId = useMemo(() => {
     const map: Record<string, string> = {};
@@ -526,6 +529,37 @@ export function GraphViewContainer() {
     }
   }, [view]);
 
+  const handleCreateBranch = useCallback(
+    async (data: { title: string; description: string; files: File[] }) => {
+      if (!activeUserId) return;
+
+      const newBranch = await createBranch({
+        userId: activeUserId,
+        title: data.title,
+      });
+
+      const rootNode = await createNode({
+        userId: activeUserId,
+        type: "root",
+        branchId: newBranch.id,
+        parentId: null,
+        title: data.title,
+        desc: data.description || null,
+      });
+
+      if (data.files.length > 0) {
+        await uploadDocuments(rootNode.id, data.files);
+      }
+
+      await runTopicAgent(rootNode.id, activeUserId);
+
+      setBranches((prev) => [...prev, newBranch]);
+      const nodesRows = await refreshGraph(activeUserId);
+      await loadConceptEdgesForBranch(newBranch.id, nodesRows);
+    },
+    [activeUserId, refreshGraph, loadConceptEdgesForBranch],
+  );
+
   const handleForceNodeClick = useCallback(
     (nodeId: string) => {
       const node = graphNodes.find((candidate) => candidate.id === nodeId);
@@ -664,6 +698,7 @@ export function GraphViewContainer() {
         onOpenConcept={(conceptId) => void handleOpenConcept(conceptId)}
         onSelectSubconcept={handleOpenNode}
         onBack={handleBack}
+        onNewBranch={() => setIsNewBranchOpen(true)}
       />
 
       <div className="absolute inset-0 left-72">
@@ -703,6 +738,12 @@ export function GraphViewContainer() {
           />
         )}
       </div>
+
+      <NewBranchDialog
+        open={isNewBranchOpen}
+        onOpenChange={setIsNewBranchOpen}
+        onSubmit={handleCreateBranch}
+      />
     </div>
   );
 }
