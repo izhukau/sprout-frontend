@@ -20,6 +20,7 @@ export type GraphNodeData = {
   branchId: string | null;
   parentId: string | null;
   completed?: boolean;
+  locked?: boolean;
   next?: boolean;
   expanded?: boolean;
   onOpenConcept?: (conceptId: string) => void;
@@ -63,8 +64,17 @@ const iconMap: Record<
 };
 
 function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
-  const { label, variant, completed, next, expanded, onOpenConcept, summary } =
-    data;
+  const {
+    label,
+    variant,
+    completed,
+    locked,
+    next,
+    expanded,
+    onOpenConcept,
+    summary,
+  } = data;
+  const isLocked = !!locked && !completed;
   const { icon: Icon, className: iconClassName } = iconMap[variant];
 
   return (
@@ -78,8 +88,11 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
         className={cn(
           nodeVariants({ variant }),
           completed && "border-[rgba(46,232,74,0.35)]",
-          next && "animate-[ambient-glow_4s_ease-in-out_infinite] opacity-100",
-          !completed && !next && "opacity-60",
+          !isLocked &&
+            next &&
+            "animate-[ambient-glow_4s_ease-in-out_infinite] opacity-100",
+          !completed && !next && !isLocked && "opacity-60",
+          isLocked && "opacity-35 saturate-50",
           selected &&
             "ring-2 ring-[#2EE84A] ring-offset-2 ring-offset-[#0A1A0F]",
           expanded && "border-[rgba(46,232,74,0.4)] opacity-100",
@@ -109,13 +122,23 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
               </p>
               <Button
                 size="sm"
-                className="w-full bg-[#2EE84A]/15 text-[#2EE84A] hover:bg-[#2EE84A]/25 border border-[#2EE84A]/20"
+                disabled={isLocked}
+                className={cn(
+                  "w-full border border-[#2EE84A]/20 bg-[#2EE84A]/15 text-[#2EE84A] hover:bg-[#2EE84A]/25",
+                  isLocked &&
+                    "cursor-not-allowed border-white/10 bg-white/5 text-white/45 hover:bg-white/5",
+                )}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isLocked) return;
                   onOpenConcept?.(id);
                 }}
               >
-                {variant === "concept" ? "Open Subconcepts" : "Open Chat"}
+                {isLocked
+                  ? "Locked"
+                  : variant === "concept"
+                    ? "Open Subconcepts"
+                    : "Open Chat"}
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>

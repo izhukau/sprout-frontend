@@ -1,18 +1,22 @@
 "use client";
 
 import type { Edge } from "@xyflow/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ForceGraphView } from "@/components/force-graph-view";
 import GraphCanvas from "@/components/graph-canvas";
-import { type GraphNode, type NodeVariant } from "@/components/graph-node";
+import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  DEFAULT_BRANCH_TITLES,
+  type BackendBranch,
+  type BackendEdge,
+  type BackendNode,
+  type BackendProgress,
   createBranch,
   createNode,
   createUser,
+  DEFAULT_BRANCH_TITLES,
   generateSubconcepts,
   getUser,
   listBranches,
@@ -20,10 +24,6 @@ import {
   listNodes,
   listProgress,
   runTopicAgent,
-  type BackendBranch,
-  type BackendEdge,
-  type BackendNode,
-  type BackendProgress,
 } from "@/lib/backend-api";
 import {
   getConceptNodesForBranch,
@@ -81,6 +81,55 @@ function buildLinearFallbackEdges(nodes: GraphNode[]): Edge[] {
   }));
 }
 
+function isStructuralEdge(edge: Edge): boolean {
+  return Boolean(
+    (edge.data as { isStructural?: boolean } | undefined)?.isStructural,
+  );
+}
+
+function buildLockedNodeIds(nodes: GraphNode[], edges: Edge[]): Set<string> {
+  const completedById = new Map(
+    nodes.map((node) => [node.id, !!node.data.completed]),
+  );
+  const nodeIdSet = new Set(nodes.map((node) => node.id));
+  const incomingByTarget = new Map<string, string[]>();
+
+  for (const edge of edges) {
+    if (isStructuralEdge(edge)) continue;
+    if (!nodeIdSet.has(edge.source) || !nodeIdSet.has(edge.target)) continue;
+    const incoming = incomingByTarget.get(edge.target) ?? [];
+    incoming.push(edge.source);
+    incomingByTarget.set(edge.target, incoming);
+  }
+
+  const locked = new Set<string>();
+  for (const node of nodes) {
+    if (node.data.completed) continue;
+    const parents = incomingByTarget.get(node.id) ?? [];
+    if (!parents.length) continue;
+
+    const allParentsCompleted = parents.every(
+      (parentId) => completedById.get(parentId) === true,
+    );
+    if (!allParentsCompleted) {
+      locked.add(node.id);
+    }
+  }
+
+  return locked;
+}
+
+function applyLockedState(nodes: GraphNode[], edges: Edge[]): GraphNode[] {
+  const lockedNodeIds = buildLockedNodeIds(nodes, edges);
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      locked: lockedNodeIds.has(node.id),
+    },
+  }));
+}
+
 async function resolveFrontendUserId(preferredUserId?: string | null) {
   if (preferredUserId) {
     try {
@@ -120,7 +169,11 @@ async function resolveFrontendUserId(preferredUserId?: string | null) {
 
 export function GraphViewContainer() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
+  const userIdFromQuery = searchParams.get("userId");
+  const branchIdFromQuery = searchParams.get("branchId");
+  const conceptIdFromQuery = searchParams.get("conceptId");
 
   const [view, setView] = useState<GraphView>({ level: "global" });
   const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(
@@ -197,7 +250,9 @@ export function GraphViewContainer() {
       setIsLoading(true);
       setError(null);
       try {
-        const userId = await resolveFrontendUserId(user?.id ?? null);
+        const userId = await resolveFrontendUserId(
+          userIdFromQuery ?? user?.id ?? null,
+        );
         if (isCancelled) return;
 
         setActiveUserId(userId);
@@ -250,6 +305,37 @@ export function GraphViewContainer() {
               loadConceptEdgesForBranch(root.branchId as string, nodesRows),
             ),
         );
+
+        if (branchIdFromQuery) {
+          const hasBranch = branchRows.some(
+            (branch) => branch.id === branchIdFromQuery,
+          );
+          if (hasBranch) {
+            setHighlightedBranchId(branchIdFromQuery);
+
+            if (conceptIdFromQuery) {
+              const conceptNode = nodesRows.find(
+                (node) =>
+                  node.id === conceptIdFromQuery &&
+                  node.type === "concept" &&
+                  node.branchId === branchIdFromQuery,
+              );
+
+              if (conceptNode) {
+                setView({
+                  level: "concept",
+                  branchId: branchIdFromQuery,
+                  conceptId: conceptIdFromQuery,
+                });
+                await loadSubconceptEdgesForConcept(conceptIdFromQuery);
+              } else {
+                setView({ level: "branch", branchId: branchIdFromQuery });
+              }
+            } else {
+              setView({ level: "branch", branchId: branchIdFromQuery });
+            }
+          }
+        }
       } catch (e) {
         if (!isCancelled) {
           setError(e instanceof Error ? e.message : "Failed to load graph");
@@ -266,7 +352,15 @@ export function GraphViewContainer() {
     return () => {
       isCancelled = true;
     };
-  }, [user?.id, refreshGraph, loadConceptEdgesForBranch]);
+  }, [
+    user?.id,
+    userIdFromQuery,
+    branchIdFromQuery,
+    conceptIdFromQuery,
+    refreshGraph,
+    loadConceptEdgesForBranch,
+    loadSubconceptEdgesForConcept,
+  ]);
 
   const handleSelectBranch = useCallback((branchId: string) => {
     setHighlightedBranchId((prev) => (prev === branchId ? null : branchId));
@@ -311,6 +405,18 @@ export function GraphViewContainer() {
     async (conceptId: string) => {
       if (view.level !== "branch") return;
 
+      const branchNodes = getConceptNodesForBranch(graphNodes, view.branchId);
+      const rootId = branchRootByBranchId[view.branchId];
+      const dependencyEdges = rootId ? conceptEdgesByRootId[rootId] : undefined;
+      const edges = dependencyEdges?.length
+        ? toReactFlowEdges(dependencyEdges)
+        : buildLinearFallbackEdges(branchNodes);
+      const lockedNodeIds = buildLockedNodeIds(branchNodes, edges);
+      if (lockedNodeIds.has(conceptId)) {
+        setError("This node is locked. Complete all parent nodes first.");
+        return;
+      }
+
       setExpandedNodeId(null);
       setView({ level: "concept", branchId: view.branchId, conceptId });
 
@@ -327,23 +433,87 @@ export function GraphViewContainer() {
         setIsSyncing(false);
       }
     },
-    [view, activeUserId, refreshGraph, loadSubconceptEdgesForConcept],
+    [
+      view,
+      graphNodes,
+      branchRootByBranchId,
+      conceptEdgesByRootId,
+      activeUserId,
+      refreshGraph,
+      loadSubconceptEdgesForConcept,
+    ],
+  );
+
+  const isNodeLockedInCurrentView = useCallback(
+    (nodeId: string) => {
+      if (view.level === "branch") {
+        const branchNodes = getConceptNodesForBranch(graphNodes, view.branchId);
+        const rootId = branchRootByBranchId[view.branchId];
+        const dependencyEdges = rootId
+          ? conceptEdgesByRootId[rootId]
+          : undefined;
+        const edges = dependencyEdges?.length
+          ? toReactFlowEdges(dependencyEdges)
+          : buildLinearFallbackEdges(branchNodes);
+        return buildLockedNodeIds(branchNodes, edges).has(nodeId);
+      }
+
+      if (view.level === "concept") {
+        const conceptNodes = getSubconceptNodesForConcept(
+          graphNodes,
+          view.conceptId,
+        );
+        const dependencyEdges =
+          subconceptEdgesByConceptId[view.conceptId] ?? [];
+        const explicitEdges = toReactFlowEdges(dependencyEdges);
+        const incoming = new Set(explicitEdges.map((edge) => edge.target));
+        const rootEdges = conceptNodes
+          .filter((node) => node.data.variant === "subconcept")
+          .filter((node) => !incoming.has(node.id))
+          .map((node) => ({
+            id: `entry-${view.conceptId}-${node.id}`,
+            source: view.conceptId,
+            target: node.id,
+            data: { isStructural: true },
+          }));
+        return buildLockedNodeIds(conceptNodes, [
+          ...explicitEdges,
+          ...rootEdges,
+        ]).has(nodeId);
+      }
+
+      return false;
+    },
+    [
+      view,
+      graphNodes,
+      branchRootByBranchId,
+      conceptEdgesByRootId,
+      subconceptEdgesByConceptId,
+    ],
   );
 
   const handleOpenNode = useCallback(
     (nodeId: string) => {
+      if (isNodeLockedInCurrentView(nodeId)) {
+        setError("This node is locked. Complete all parent nodes first.");
+        return;
+      }
+
       if (view.level === "branch") {
         void handleOpenConcept(nodeId);
       } else if (view.level === "concept") {
         setExpandedNodeId(null);
         const query = new URLSearchParams({ nodeId });
+        query.set("branchId", view.branchId);
+        query.set("conceptId", view.conceptId);
         if (activeUserId) {
           query.set("userId", activeUserId);
         }
         router.push(`/learn?${query.toString()}`);
       }
     },
-    [view, handleOpenConcept, activeUserId, router],
+    [view, isNodeLockedInCurrentView, handleOpenConcept, activeUserId, router],
   );
 
   const handleBack = useCallback(() => {
@@ -397,6 +567,10 @@ export function GraphViewContainer() {
 
   const handleReactFlowNodeClick = useCallback(
     (nodeId: string) => {
+      if (isNodeLockedInCurrentView(nodeId)) {
+        return;
+      }
+
       if (view.level === "branch") {
         const node = graphNodes.find((candidate) => candidate.id === nodeId);
         if (node?.data.variant === "concept") {
@@ -409,7 +583,7 @@ export function GraphViewContainer() {
         }
       }
     },
-    [view, graphNodes],
+    [view, graphNodes, isNodeLockedInCurrentView],
   );
 
   const { filteredNodes, filteredEdges } = useMemo(() => {
@@ -417,12 +591,16 @@ export function GraphViewContainer() {
       const branchNodes = getConceptNodesForBranch(graphNodes, view.branchId);
       const rootId = branchRootByBranchId[view.branchId];
       const dependencyEdges = rootId ? conceptEdgesByRootId[rootId] : undefined;
-      const edges =
-        dependencyEdges && dependencyEdges.length
-          ? toReactFlowEdges(dependencyEdges)
-          : buildLinearFallbackEdges(branchNodes);
+      const edges = dependencyEdges?.length
+        ? toReactFlowEdges(dependencyEdges)
+        : buildLinearFallbackEdges(branchNodes);
 
-      return { filteredNodes: branchNodes, filteredEdges: edges };
+      const nodesWithLocks = applyLockedState(branchNodes, edges);
+
+      return {
+        filteredNodes: nodesWithLocks,
+        filteredEdges: edges,
+      };
     }
 
     if (view.level === "concept") {
@@ -441,15 +619,22 @@ export function GraphViewContainer() {
           id: `entry-${view.conceptId}-${node.id}`,
           source: view.conceptId,
           target: node.id,
+          data: { isStructural: true },
         }));
 
+      const edges = [...explicitEdges, ...rootEdges];
+      const nodesWithLocks = applyLockedState(conceptNodes, edges);
+
       return {
-        filteredNodes: conceptNodes,
-        filteredEdges: [...explicitEdges, ...rootEdges],
+        filteredNodes: nodesWithLocks,
+        filteredEdges: edges,
       };
     }
 
-    return { filteredNodes: [], filteredEdges: [] as Edge[] };
+    return {
+      filteredNodes: [],
+      filteredEdges: [] as Edge[],
+    };
   }, [
     view,
     graphNodes,
@@ -471,7 +656,7 @@ export function GraphViewContainer() {
       <GraphSidebar
         view={view}
         branches={branches}
-        nodes={graphNodes}
+        nodes={view.level === "global" ? graphNodes : filteredNodes}
         highlightedBranchId={highlightedBranchId}
         onSelectBranch={handleSelectBranch}
         onOpenBranch={(branchId) => void handleOpenBranch(branchId)}
