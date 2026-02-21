@@ -24,8 +24,15 @@ const edgeStyle = {
   strokeDasharray: "6,4",
 };
 
+function isStructuralEdge(edge: Edge): boolean {
+  return Boolean(
+    (edge.data as { isStructural?: boolean } | undefined)?.isStructural,
+  );
+}
+
 function minimapNodeColor(node: GraphNode): string {
   if (node.data?.completed) return "#2EE84A";
+  if (node.data?.locked) return "rgba(61,191,90,0.35)";
   switch (node.data?.variant) {
     case "root":
       return "#2EE84A";
@@ -57,33 +64,27 @@ export default function GraphCanvas({
 }: GraphCanvasProps) {
   const { layoutedNodes, layoutedEdges } = useMemo(() => {
     const initialEdges = inputEdges ?? buildEdgesFromNodes(inputNodes);
+    const nodeById = new Map(inputNodes.map((node) => [node.id, node]));
 
-    // Derive frontier: edges from completed → not-completed nodes
-    const nodeCompletionMap = new Map(
-      inputNodes.map((n) => [n.id, !!n.data.completed]),
-    );
-
-    const nextNodeIds = new Set(
-      initialEdges
-        .filter(
-          (e) =>
-            nodeCompletionMap.get(e.source) && !nodeCompletionMap.get(e.target),
-        )
-        .map((e) => e.target),
-    );
+    const nodesWithNext = inputNodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        next: !node.data.completed && !node.data.locked,
+      },
+    }));
 
     const styledEdges = initialEdges.map((edge) => {
+      const sourceNode = nodeById.get(edge.source);
+      const targetNode = nodeById.get(edge.target);
       const isFrontier =
-        nodeCompletionMap.get(edge.source) &&
-        !nodeCompletionMap.get(edge.target);
+        !isStructuralEdge(edge) &&
+        !!sourceNode?.data.completed &&
+        !!targetNode &&
+        !targetNode.data.completed &&
+        !targetNode.data.locked;
       return { ...edge, style: edgeStyle, animated: isFrontier };
     });
-
-    const nodesWithNext = inputNodes.map((node) =>
-      nextNodeIds.has(node.id)
-        ? { ...node, data: { ...node.data, next: true } }
-        : node,
-    );
 
     const result = getLayoutedElements(nodesWithNext, styledEdges);
     return { layoutedNodes: result.nodes, layoutedEdges: result.edges };
@@ -175,6 +176,7 @@ export default function GraphCanvas({
   }, [layoutedEdges, setEdges]);
 
   const handleNodeClick = (_event: React.MouseEvent, node: Node) => {
+    if ((node.data as { locked?: boolean } | undefined)?.locked) return;
     onNodeClick?.(node.id);
   };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   BookOpen,
   Bot,
   Check,
@@ -21,7 +22,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   type FormEvent,
   useCallback,
@@ -491,11 +492,14 @@ function splitTutorChunk(content: string): {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function LearnView() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
   const nodeId = searchParams.get("nodeId");
   const userIdFromQuery = searchParams.get("userId");
+  const branchIdFromQuery = searchParams.get("branchId");
+  const conceptIdFromQuery = searchParams.get("conceptId");
   const backendUserId = userIdFromQuery ?? user?.id ?? null;
   const isBackendChatEnabled = !!nodeId && !!backendUserId;
 
@@ -816,6 +820,22 @@ export function LearnView() {
     isTutorSending ||
     !currentQuestion ||
     (isBackendChatEnabled && (isChatLoading || !chatSessionId));
+
+  const handleBackToSubconcepts = useCallback(() => {
+    if (branchIdFromQuery && conceptIdFromQuery) {
+      const query = new URLSearchParams({
+        branchId: branchIdFromQuery,
+        conceptId: conceptIdFromQuery,
+      });
+      if (backendUserId) {
+        query.set("userId", backendUserId);
+      }
+      router.push(`/graph?${query.toString()}`);
+      return;
+    }
+
+    router.push("/graph");
+  }, [branchIdFromQuery, conceptIdFromQuery, backendUserId, router]);
   const graphTheme = {
     bg: "#0A1A0F",
     panel: "rgba(17,34,20,0.55)",
@@ -847,6 +867,21 @@ export function LearnView() {
           }}
         >
           <div className="flex items-center gap-3">
+            {isBackendChatEnabled && (
+              <button
+                type="button"
+                onClick={handleBackToSubconcepts}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold uppercase tracking-wide transition-all hover:opacity-85"
+                style={{
+                  borderColor: graphTheme.borderStrong,
+                  background: graphTheme.accentBg,
+                  color: graphTheme.accentText,
+                }}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
+            )}
             <Sparkles
               className="h-4 w-4"
               style={{ color: graphTheme.accent }}

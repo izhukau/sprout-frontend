@@ -5,9 +5,9 @@ import { useMemo } from "react";
 import type { GraphNode } from "@/components/graph-node";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { BackendBranch } from "@/lib/backend-api";
 import { buildBranchColorMap } from "@/lib/graph-utils";
 import { cn } from "@/lib/utils";
-import type { BackendBranch } from "@/lib/backend-api";
 
 export type GraphView =
   | { level: "global" }
@@ -178,23 +178,33 @@ function BranchLevel({
               {String(i + 1).padStart(2, "0")}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              onSelectConcept(concept.id);
-              onOpenConcept(concept.id);
-            }}
-            className={cn(
-              "flex flex-1 items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition-all duration-200",
-              "border border-transparent text-white/60 hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
-              concept.data.completed && "text-white/80",
-            )}
-          >
-            {concept.data.completed && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#2EE84A]" />
-            )}
-            <span className="min-w-0 truncate">{concept.data.label}</span>
-          </button>
+          {(() => {
+            const isLocked = !!concept.data.locked && !concept.data.completed;
+            return (
+              <button
+                type="button"
+                disabled={isLocked}
+                onClick={() => {
+                  if (isLocked) return;
+                  onSelectConcept(concept.id);
+                  onOpenConcept(concept.id);
+                }}
+                className={cn(
+                  "flex flex-1 items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition-all duration-200",
+                  "border border-transparent text-white/60",
+                  !isLocked &&
+                    "hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
+                  concept.data.completed && "text-white/80",
+                  isLocked && "cursor-not-allowed opacity-40",
+                )}
+              >
+                {concept.data.completed && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#2EE84A]" />
+                )}
+                <span className="min-w-0 truncate">{concept.data.label}</span>
+              </button>
+            );
+          })()}
         </li>
       ))}
     </ul>
@@ -218,22 +228,34 @@ function ConceptLevel({
     <ul className="space-y-1">
       {subconcepts.map((sub) => (
         <li key={sub.id}>
-          <button
-            type="button"
-            onClick={() => onSelectSubconcept(sub.id)}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition-all duration-200",
-              "border border-transparent hover:bg-[rgba(46,232,74,0.04)]",
-              sub.data.completed
-                ? "text-white/80 hover:text-white"
-                : "text-white/50 hover:text-white/70",
-            )}
-          >
-            {sub.data.completed && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#2EE84A]" />
-            )}
-            <span className="min-w-0 truncate">{sub.data.label}</span>
-          </button>
+          {(() => {
+            const isLocked = !!sub.data.locked && !sub.data.completed;
+            return (
+              <button
+                type="button"
+                disabled={isLocked}
+                onClick={() => {
+                  if (isLocked) return;
+                  onSelectSubconcept(sub.id);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition-all duration-200",
+                  "border border-transparent",
+                  !isLocked && "hover:bg-[rgba(46,232,74,0.04)]",
+                  sub.data.completed
+                    ? "text-white/80 hover:text-white"
+                    : "text-white/50 hover:text-white/70",
+                  isLocked &&
+                    "cursor-not-allowed opacity-40 hover:text-white/50",
+                )}
+              >
+                {sub.data.completed && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#2EE84A]" />
+                )}
+                <span className="min-w-0 truncate">{sub.data.label}</span>
+              </button>
+            );
+          })()}
         </li>
       ))}
     </ul>
