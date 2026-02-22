@@ -42,7 +42,7 @@ import {
 } from "@/components/excalidraw-board";
 import { MarkdownLite } from "@/components/markdown-lite";
 import { SproutAvatar } from "@/components/sprout-avatar";
-import { useAuth } from "@/hooks/use-auth";
+import { DEFAULT_USER_ID } from "@/lib/constants";
 import {
   type BackendChatMessage,
   createChatSession,
@@ -881,14 +881,11 @@ function useVoiceConversation(): VoiceConversation {
 export function LearnView() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
-
   const nodeId = searchParams.get("nodeId");
-  const userIdFromQuery = searchParams.get("userId");
   const branchIdFromQuery = searchParams.get("branchId");
   const conceptIdFromQuery = searchParams.get("conceptId");
-  const backendUserId = userIdFromQuery ?? user?.id ?? null;
-  const isBackendChatEnabled = !!nodeId && !!backendUserId;
+  const backendUserId = DEFAULT_USER_ID;
+  const isBackendChatEnabled = !!nodeId;
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [quizSelected, setQuizSelected] = useState<Record<string, number>>({});
@@ -1430,15 +1427,12 @@ export function LearnView() {
         branchId: branchIdFromQuery,
         conceptId: conceptIdFromQuery,
       });
-      if (backendUserId) {
-        query.set("userId", backendUserId);
-      }
       router.push(`/graph?${query.toString()}`);
       return;
     }
 
     router.push("/graph");
-  }, [branchIdFromQuery, conceptIdFromQuery, backendUserId, router]);
+  }, [branchIdFromQuery, conceptIdFromQuery, router]);
   const graphTheme = {
     bg: "#0A1A0F",
     panel: "rgba(17,34,20,0.55)",
