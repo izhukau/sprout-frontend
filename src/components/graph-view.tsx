@@ -10,8 +10,10 @@ import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { ConceptDiagnosticChat } from "@/components/concept-diagnostic-chat";
+import { HandCursor } from "@/components/hand-cursor";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
 import { useAuth } from "@/hooks/use-auth";
+import { useHandTracking } from "@/hooks/use-hand-tracking";
 import {
   type BackendBranch,
   type BackendEdge,
@@ -36,6 +38,7 @@ import {
   getConceptNodesForBranch,
   getSubconceptNodesForConcept,
 } from "@/lib/graph-utils";
+import { getConceptDiagnostic } from "@/lib/backend-api";
 
 const USER_ID_STORAGE_KEY = "sprout_user_id";
 
@@ -196,6 +199,8 @@ export function GraphViewContainer() {
     questions: BackendQuestion[];
     requiredAnswers: number;
   } | null>(null);
+  const [dismissedDiagnosticConcepts, setDismissedDiagnosticConcepts] =
+    useState<Set<string>>(new Set());
 
   const [branches, setBranches] = useState<BackendBranch[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
@@ -211,12 +216,56 @@ export function GraphViewContainer() {
   const [error, setError] = useState<string | null>(null);
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
   const isSmallAgents = process.env.NEXT_PUBLIC_SMALL_AGENTS === "true";
+  const [handTrackingEnabled, setHandTrackingEnabled] = useState(false);
+  const { handPos, connected: handConnected } = useHandTracking(
+    "ws://localhost:8765",
+    handTrackingEnabled,
+  );
 
   // Ref mirror for use inside SSE mutation handler (avoids stale closures)
   const backendNodesRef = useRef<BackendNode[]>([]);
   useEffect(() => {
     backendNodesRef.current = backendNodes;
   }, [backendNodes]);
+  // Optional diagnostic fetch on concept entry
+  useEffect(() => {
+    let cancelled = false;
+    const loadDiagnostic = async () => {
+      if (view.level !== "concept") {
+        setPendingDiagnostic(null);
+        return;
+      }
+      if (!activeUserId) return;
+      if (dismissedDiagnosticConcepts.has(view.conceptId)) return;
+      try {
+        const result = await getConceptDiagnostic({
+          conceptId: view.conceptId,
+          userId: activeUserId,
+        });
+        if (cancelled) return;
+        if (result.answeredCount >= result.requiredAnswers) {
+          setPendingDiagnostic(null);
+          return;
+        }
+        const conceptTitle =
+          backendNodesRef.current.find((n) => n.id === view.conceptId)?.title ??
+          "Concept";
+        setPendingDiagnostic({
+          conceptId: view.conceptId,
+          conceptTitle,
+          assessment: result.assessment,
+          questions: result.questions,
+          requiredAnswers: result.requiredAnswers,
+        });
+      } catch {
+        /* optional; ignore errors */
+      }
+    };
+    void loadDiagnostic();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, activeUserId, dismissedDiagnosticConcepts]);
 
   const completedSetRef = useRef<Set<string>>(new Set());
 
@@ -362,22 +411,7 @@ export function GraphViewContainer() {
 
       case "json_response": {
         const data = mutation.data as Record<string, unknown>;
-        if (data.status === "awaiting_answers") {
-          const conceptId = data.conceptNodeId as string;
-          const conceptTitle =
-            backendNodesRef.current.find((n) => n.id === conceptId)?.title ??
-            "Concept";
-          setPendingDiagnostic({
-            conceptId,
-            conceptTitle,
-            assessment: data.assessment as BackendAssessment,
-            questions: (data.questions as BackendQuestion[]) ?? [],
-            requiredAnswers:
-              (data.requiredAnswers as number | undefined) ??
-              (data.questions as BackendQuestion[])?.length ??
-              10,
-          });
-        } else if (data.status === "not_ready") {
+        if (data.status === "not_ready") {
           setError(
             "Diagnostic questions are still being generated. Please wait a moment and try again.",
           );
@@ -980,7 +1014,16 @@ export function GraphViewContainer() {
         onNewBranch={() => setIsNewBranchOpen(true)}
       />
 
-      <div className="absolute inset-0 left-72">
+      <div
+        className="absolute inset-0 left-72"
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && highlightedBranchId) {
+            setHighlightedBranchId(null);
+          }
+        }}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: need focus for key events
+        tabIndex={0}
+      >
         {(error || streamError) && (
           <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {error || streamError}
@@ -992,15 +1035,72 @@ export function GraphViewContainer() {
           </div>
         )}
 
+        {/* Hand tracking toggle */}
+        <button
+          type="button"
+          onClick={() => setHandTrackingEnabled((prev) => !prev)}
+          title={
+            handTrackingEnabled
+              ? "Disable hand tracking"
+              : "Enable hand tracking"
+          }
+          className={[
+            "absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
+            handTrackingEnabled
+              ? "border-green-500/60 bg-green-500/20 text-green-300"
+              : "border-white/10 bg-[rgba(10,26,15,0.8)] text-white/40 hover:border-white/20 hover:text-white/70",
+          ].join(" ")}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2" />
+            <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2" />
+            <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+            <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+          </svg>
+          {handTrackingEnabled
+            ? handConnected
+              ? "Hand tracking on"
+              : "Connecting…"
+            : "Hand tracking"}
+        </button>
+
+        <HandCursor handPos={handPos} connected={handConnected} />
+
         {view.level === "global" && (
-          <ForceGraphView
-            branches={branches}
-            nodes={graphNodes}
-            dependencyEdges={allDependencyEdges}
-            highlightedBranchId={highlightedBranchId}
-            focusedNodeId={focusedNodeId}
-            onNodeClick={handleForceNodeClick}
-          />
+          <>
+            <ForceGraphView
+              branches={branches}
+              nodes={graphNodes}
+              dependencyEdges={allDependencyEdges}
+              highlightedBranchId={highlightedBranchId}
+              focusedNodeId={focusedNodeId}
+              onNodeClick={handleForceNodeClick}
+              handPos={handPos}
+            />
+            {highlightedBranchId && (
+              <button
+                type="button"
+                onClick={() => setHighlightedBranchId(null)}
+                className="absolute left-4 top-4 z-20 flex items-center gap-2 rounded-lg border border-[rgba(46,232,74,0.25)] bg-[rgba(10,26,15,0.85)] px-3 py-2 text-xs text-[#2EE84A] backdrop-blur-sm transition-colors hover:bg-[rgba(46,232,74,0.15)]"
+              >
+                <span>&#x2190;</span>
+                <span>All branches</span>
+                <kbd className="ml-1 rounded border border-[rgba(46,232,74,0.2)] px-1 text-[10px] text-[#2EE84A]/60">
+                  Esc
+                </kbd>
+              </button>
+            )}
+          </>
         )}
         {(view.level === "branch" || view.level === "concept") && (
           <GraphCanvas
@@ -1045,7 +1145,14 @@ export function GraphViewContainer() {
             setPendingDiagnostic(null);
             resumeConceptRun(pendingDiagnostic.conceptId);
           }}
-          onClose={() => setPendingDiagnostic(null)}
+          onClose={() => {
+            setPendingDiagnostic(null);
+            setDismissedDiagnosticConcepts((prev) => {
+              const next = new Set(prev);
+              next.add(pendingDiagnostic.conceptId);
+              return next;
+            });
+          }}
         />
       )}
     </div>

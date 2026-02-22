@@ -353,6 +353,24 @@ export async function submitAssessmentAnswer(
   });
 }
 
+export async function getConceptDiagnostic(params: {
+  conceptId: string;
+  userId: string;
+}): Promise<{
+  agent: string;
+  status: string;
+  conceptNodeId: string;
+  assessment: BackendAssessment;
+  questions: BackendQuestion[];
+  answeredCount: number;
+  requiredAnswers: number;
+}> {
+  const query = new URLSearchParams({ userId: params.userId });
+  return apiFetch(
+    `/api/agents/concepts/${params.conceptId}/diagnostic?${query.toString()}`,
+  );
+}
+
 export async function getActiveNodeContent(
   nodeId: string,
 ): Promise<BackendNodeContent | null> {

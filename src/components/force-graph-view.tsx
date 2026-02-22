@@ -22,6 +22,7 @@ type ForceGraphViewProps = {
   highlightedBranchId: string | null;
   focusedNodeId: string | null;
   onNodeClick: (nodeId: string) => void;
+  handPos?: { x: number; y: number; z: number } | null;
 };
 
 export function ForceGraphView({
@@ -31,6 +32,7 @@ export function ForceGraphView({
   highlightedBranchId,
   focusedNodeId,
   onNodeClick,
+  handPos,
 }: ForceGraphViewProps) {
   // biome-ignore lint/suspicious/noExplicitAny: react-force-graph ref type is untyped
   const graphRef = useRef<any>(null);
@@ -38,14 +40,31 @@ export function ForceGraphView({
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const focusNodeRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const initialFitDone = useRef(false);
+  const smoothHandRef = useRef<{ x: number; y: number } | null>(null);
   const graphDataRef = useRef<{ nodes: ForceNode[]; links: ForceLink[] }>({
     nodes: [],
     links: [],
   });
+  const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graphData = useMemo(() => {
     graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
     return graphDataRef.current;
   }, [nodes, dependencyEdges]);
+  // Pin all nodes after 500ms so they stay put when the next node arrives
+  useEffect(() => {
+    if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+    pinTimerRef.current = setTimeout(() => {
+      for (const n of graphData.nodes) {
+        const node = n as ForceNode & { x?: number; y?: number; z?: number; fx?: number; fy?: number; fz?: number };
+        if (node.x != null) node.fx = node.x;
+        if (node.y != null) node.fy = node.y;
+        if (node.z != null) node.fz = node.z;
+      }
+    }, 500);
+    return () => {
+      if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+    };
+  }, [graphData.nodes]);
   const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
   const branchCenters = useMemo(() => {
     const centers = new Map<string, { x: number; y: number }>();
@@ -149,6 +168,39 @@ export function ForceGraphView({
 
     fg.zoomToFit(600, 0);
   }, [highlightedBranchId]);
+
+  // Orbit camera based on hand position (only in global view, no branch focused)
+  useEffect(() => {
+    if (!handPos || highlightedBranchId) return;
+
+    const fg = graphRef.current;
+    if (!fg) return;
+
+    // EMA smoothing to reduce jitter
+    if (!smoothHandRef.current) {
+      smoothHandRef.current = { x: handPos.x, y: handPos.y };
+    } else {
+      smoothHandRef.current.x = smoothHandRef.current.x * 0.75 + handPos.x * 0.25;
+      smoothHandRef.current.y = smoothHandRef.current.y * 0.75 + handPos.y * 0.25;
+    }
+
+    const cam = fg.camera?.();
+    const r = cam ? cam.position.length() : 350;
+
+    // Map hand x [0,1] → azimuth [-π, π], y [0,1] → elevation [π/3, -π/3]
+    const theta = (smoothHandRef.current.x - 0.5) * 2 * Math.PI;
+    const phi = (0.5 - smoothHandRef.current.y) * (Math.PI / 3);
+
+    fg.cameraPosition(
+      {
+        x: r * Math.cos(phi) * Math.sin(theta),
+        y: r * Math.sin(phi),
+        z: r * Math.cos(phi) * Math.cos(theta),
+      },
+      { x: 0, y: 0, z: 0 },
+      50,
+    );
+  }, [handPos, highlightedBranchId]);
 
   const focusAndSelect = useCallback(
     // biome-ignore lint/suspicious/noExplicitAny: force-graph node type

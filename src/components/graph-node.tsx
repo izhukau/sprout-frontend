@@ -32,7 +32,7 @@ export type GraphNode = Node<GraphNodeData, "graph">;
 
 const nodeVariants = cva(
   [
-    "relative w-[340px] overflow-hidden rounded-2xl px-5 py-4",
+    "relative w-[340px] rounded-2xl px-5 py-4",
     "bg-[rgba(17,34,20,0.55)] backdrop-blur-[16px]",
     "border border-[rgba(46,232,74,0.15)]",
     "shadow-[0_8px_32px_rgba(0,0,0,0.3)]",
@@ -116,8 +116,8 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
         {(variant === "concept" || variant === "subconcept") && (
           <div
             className={cn(
-              "overflow-hidden transition-opacity duration-400 ease-out",
-              expanded ? "max-h-[160px] opacity-100 mt-3" : "max-h-0 opacity-0",
+              "overflow-hidden transition-all duration-400 ease-out",
+              expanded ? "max-h-[300px] opacity-100 mt-3" : "max-h-0 opacity-0",
             )}
           >
             <div className="border-t border-[rgba(46,232,74,0.15)] pt-3">
