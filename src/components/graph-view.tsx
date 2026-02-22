@@ -10,6 +10,7 @@ import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
+import { useMutationBuffer } from "@/hooks/use-mutation-buffer";
 import { useAuth } from "@/hooks/use-auth";
 import { useHandTracking } from "@/hooks/use-hand-tracking";
 import { HandCursor } from "@/components/hand-cursor";
@@ -226,154 +227,231 @@ export function GraphViewContainer() {
     return map;
   }, [backendNodes]);
 
+  // --- Batch flush: processes all buffered mutations at once ---
+  const handleFlush = useCallback((mutations: StreamMutation[]) => {
+    const nodesToAdd: BackendNode[] = [];
+    const nodeIdsToAnimate: string[] = [];
+    const nodeIdsToRemove: string[] = [];
+
+    // Collect edge changes keyed by root/concept for single setState each
+    const conceptEdgeAdds: Record<string, BackendEdge[]> = {};
+    const subconceptEdgeAdds: Record<string, BackendEdge[]> = {};
+    const edgeRemovals: Array<{
+      sourceNodeId: string;
+      targetNodeId: string;
+    }> = [];
+
+    for (const mutation of mutations) {
+      switch (mutation.kind) {
+        case "node_created":
+          nodesToAdd.push(mutation.node);
+          break;
+
+        case "node_removed":
+          nodeIdsToAnimate.push(mutation.nodeId);
+          nodeIdsToRemove.push(mutation.nodeId);
+          break;
+
+        case "edge_created": {
+          const { sourceNodeId, targetNodeId } = mutation.edge;
+          const nodes = backendNodesRef.current;
+          const sourceNode = nodes.find((n) => n.id === sourceNodeId);
+          const targetNode = nodes.find((n) => n.id === targetNodeId);
+
+          if (sourceNode && targetNode) {
+            const edgeRow: BackendEdge = {
+              id: `sse-${sourceNodeId}-${targetNodeId}`,
+              sourceNodeId,
+              targetNodeId,
+              createdAt: new Date().toISOString(),
+            };
+
+            if (
+              sourceNode.type === "concept" &&
+              targetNode.type === "concept" &&
+              sourceNode.parentId
+            ) {
+              const rootId = sourceNode.parentId;
+              (conceptEdgeAdds[rootId] ??= []).push(edgeRow);
+            } else if (
+              targetNode.type === "subconcept" ||
+              sourceNode.type === "subconcept"
+            ) {
+              const conceptId =
+                sourceNode.type === "subconcept"
+                  ? sourceNode.parentId
+                  : sourceNode.id;
+              if (conceptId) {
+                (subconceptEdgeAdds[conceptId] ??= []).push(edgeRow);
+              }
+            }
+          }
+          break;
+        }
+
+        case "edge_removed":
+          edgeRemovals.push({
+            sourceNodeId: mutation.sourceNodeId,
+            targetNodeId: mutation.targetNodeId,
+          });
+          break;
+
+        case "json_response": {
+          const data = mutation.data as Record<string, unknown>;
+          if (data.status === "awaiting_answers") {
+            console.info(
+              "[GraphView] Concept awaiting diagnostic answers:",
+              data,
+            );
+          } else if (data.status === "not_ready") {
+            setError(
+              "Diagnostic questions are still being generated. Please wait a moment and try again.",
+            );
+          }
+          break;
+        }
+      }
+    }
+
+    // --- Apply node additions in one batch ---
+    if (nodesToAdd.length > 0) {
+      setBackendNodes((prev) => {
+        const existingIds = new Set(prev.map((n) => n.id));
+        const newNodes = nodesToAdd.filter((n) => !existingIds.has(n.id));
+        return newNodes.length > 0 ? [...prev, ...newNodes] : prev;
+      });
+      setGraphNodes((prev) => {
+        const existingIds = new Set(prev.map((n) => n.id));
+        const newNodes = nodesToAdd.filter((n) => !existingIds.has(n.id));
+        if (newNodes.length === 0) return prev;
+        const mapped = mapBackendNodesToGraphNodes(
+          newNodes,
+          completedSetRef.current,
+        );
+        return [...prev, ...mapped];
+      });
+    }
+
+    // --- Apply removal animations in one batch ---
+    if (nodeIdsToAnimate.length > 0) {
+      const removeSet = new Set(nodeIdsToAnimate);
+      setGraphNodes((prev) =>
+        prev.map((n) =>
+          removeSet.has(n.id)
+            ? { ...n, data: { ...n.data, isRemoving: true } }
+            : n,
+        ),
+      );
+      // Remove after animation delay
+      setTimeout(() => {
+        setBackendNodes((prev) =>
+          prev.filter((n) => !removeSet.has(n.id)),
+        );
+        setGraphNodes((prev) =>
+          prev.filter((n) => !removeSet.has(n.id)),
+        );
+      }, 400);
+    }
+
+    // --- Apply concept edge additions ---
+    if (
+      Object.keys(conceptEdgeAdds).length > 0 ||
+      edgeRemovals.length > 0
+    ) {
+      setConceptEdgesByRootId((prev) => {
+        const next = { ...prev };
+        for (const [rootId, newEdges] of Object.entries(conceptEdgeAdds)) {
+          const existing = next[rootId] ?? [];
+          const existingKeys = new Set(
+            existing.map((e) => `${e.sourceNodeId}->${e.targetNodeId}`),
+          );
+          const deduped = newEdges.filter(
+            (e) =>
+              !existingKeys.has(`${e.sourceNodeId}->${e.targetNodeId}`),
+          );
+          if (deduped.length > 0) {
+            next[rootId] = [...existing, ...deduped];
+          }
+        }
+        for (const { sourceNodeId, targetNodeId } of edgeRemovals) {
+          for (const key of Object.keys(next)) {
+            next[key] = next[key].filter(
+              (e) =>
+                !(
+                  e.sourceNodeId === sourceNodeId &&
+                  e.targetNodeId === targetNodeId
+                ),
+            );
+          }
+        }
+        return next;
+      });
+    }
+
+    // --- Apply subconcept edge additions ---
+    if (
+      Object.keys(subconceptEdgeAdds).length > 0 ||
+      edgeRemovals.length > 0
+    ) {
+      setSubconceptEdgesByConceptId((prev) => {
+        const next = { ...prev };
+        for (const [conceptId, newEdges] of Object.entries(
+          subconceptEdgeAdds,
+        )) {
+          const existing = next[conceptId] ?? [];
+          const existingKeys = new Set(
+            existing.map((e) => `${e.sourceNodeId}->${e.targetNodeId}`),
+          );
+          const deduped = newEdges.filter(
+            (e) =>
+              !existingKeys.has(`${e.sourceNodeId}->${e.targetNodeId}`),
+          );
+          if (deduped.length > 0) {
+            next[conceptId] = [...existing, ...deduped];
+          }
+        }
+        for (const { sourceNodeId, targetNodeId } of edgeRemovals) {
+          for (const key of Object.keys(next)) {
+            next[key] = next[key].filter(
+              (e) =>
+                !(
+                  e.sourceNodeId === sourceNodeId &&
+                  e.targetNodeId === targetNodeId
+                ),
+            );
+          }
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const { push: pushMutation, flush: flushMutations } = useMutationBuffer({
+    onFlush: handleFlush,
+    bufferMs: 1000,
+  });
+
   // --- SSE stream mutation handler ---
-  const handleStreamMutation = useCallback((mutation: StreamMutation) => {
-    switch (mutation.kind) {
-      case "node_created": {
+  // Updates refs immediately (for edge classification), but buffers state updates
+  const handleStreamMutation = useCallback(
+    (mutation: StreamMutation) => {
+      // Sync ref immediately so subsequent edge_created (flushed from
+      // the SSE buffer in the same microtask) can find this node.
+      if (mutation.kind === "node_created") {
         const node = mutation.node;
-        // Sync ref immediately so subsequent edge_created (flushed from
-        // the SSE buffer in the same microtask) can find this node.
         if (!backendNodesRef.current.some((n) => n.id === node.id)) {
           backendNodesRef.current = [...backendNodesRef.current, node];
         }
-        setBackendNodes((prev) => {
-          if (prev.some((n) => n.id === node.id)) return prev;
-          return [...prev, node];
-        });
-        setGraphNodes((prev) => {
-          if (prev.some((n) => n.id === node.id)) return prev;
-          const graphNode = mapBackendNodesToGraphNodes(
-            [node],
-            completedSetRef.current,
-          )[0];
-          return [...prev, graphNode];
-        });
-        break;
-      }
-
-      case "edge_created": {
-        const { sourceNodeId, targetNodeId } = mutation.edge;
-        const nodes = backendNodesRef.current;
-        const sourceNode = nodes.find((n) => n.id === sourceNodeId);
-        const targetNode = nodes.find((n) => n.id === targetNodeId);
-
-        if (sourceNode && targetNode) {
-          const edgeRow: BackendEdge = {
-            id: `sse-${sourceNodeId}-${targetNodeId}`,
-            sourceNodeId,
-            targetNodeId,
-            createdAt: new Date().toISOString(),
-          };
-
-          // Classify: concept-to-concept → conceptEdgesByRootId
-          if (
-            sourceNode.type === "concept" &&
-            targetNode.type === "concept" &&
-            sourceNode.parentId
-          ) {
-            const rootId = sourceNode.parentId;
-            setConceptEdgesByRootId((prev) => {
-              const existing = prev[rootId] ?? [];
-              if (
-                existing.some(
-                  (e) =>
-                    e.sourceNodeId === sourceNodeId &&
-                    e.targetNodeId === targetNodeId,
-                )
-              )
-                return prev;
-              return { ...prev, [rootId]: [...existing, edgeRow] };
-            });
-          }
-          // Classify: subconcept edges → subconceptEdgesByConceptId
-          else if (
-            targetNode.type === "subconcept" ||
-            sourceNode.type === "subconcept"
-          ) {
-            const conceptId =
-              sourceNode.type === "subconcept"
-                ? sourceNode.parentId
-                : sourceNode.id;
-            if (conceptId) {
-              setSubconceptEdgesByConceptId((prev) => {
-                const existing = prev[conceptId] ?? [];
-                if (
-                  existing.some(
-                    (e) =>
-                      e.sourceNodeId === sourceNodeId &&
-                      e.targetNodeId === targetNodeId,
-                  )
-                )
-                  return prev;
-                return { ...prev, [conceptId]: [...existing, edgeRow] };
-              });
-            }
-          }
-        }
-        break;
-      }
-
-      case "node_removed": {
-        // Sync ref immediately (mirrors node_created symmetry)
+      } else if (mutation.kind === "node_removed") {
         backendNodesRef.current = backendNodesRef.current.filter(
           (n) => n.id !== mutation.nodeId,
         );
-        // Mark as removing for animation, then remove after delay
-        setGraphNodes((prev) =>
-          prev.map((n) =>
-            n.id === mutation.nodeId
-              ? { ...n, data: { ...n.data, isRemoving: true } }
-              : n,
-          ),
-        );
-        setTimeout(() => {
-          setBackendNodes((prev) =>
-            prev.filter((n) => n.id !== mutation.nodeId),
-          );
-          setGraphNodes((prev) => prev.filter((n) => n.id !== mutation.nodeId));
-        }, 400);
-        break;
       }
 
-      case "edge_removed": {
-        const { sourceNodeId, targetNodeId } = mutation;
-        const filterEdge = (e: BackendEdge) =>
-          !(e.sourceNodeId === sourceNodeId && e.targetNodeId === targetNodeId);
-        setConceptEdgesByRootId((prev) => {
-          const updated: Record<string, BackendEdge[]> = {};
-          for (const key of Object.keys(prev)) {
-            updated[key] = prev[key].filter(filterEdge);
-          }
-          return updated;
-        });
-        setSubconceptEdgesByConceptId((prev) => {
-          const updated: Record<string, BackendEdge[]> = {};
-          for (const key of Object.keys(prev)) {
-            updated[key] = prev[key].filter(filterEdge);
-          }
-          return updated;
-        });
-        break;
-      }
-
-      case "json_response": {
-        const data = mutation.data as Record<string, unknown>;
-        if (data.status === "awaiting_answers") {
-          // Diagnostic questions need to be answered first.
-          // Store for future diagnostic UI integration.
-          console.info(
-            "[GraphView] Concept awaiting diagnostic answers:",
-            data,
-          );
-        } else if (data.status === "not_ready") {
-          setError(
-            "Diagnostic questions are still being generated. Please wait a moment and try again.",
-          );
-        }
-        break;
-      }
-    }
-  }, []);
+      pushMutation(mutation);
+    },
+    [pushMutation],
+  );
 
   const {
     startStream,
@@ -384,6 +462,15 @@ export function GraphViewContainer() {
     activityLog,
     clearActivityLog,
   } = useAgentStream({ onMutation: handleStreamMutation });
+
+  // Flush remaining buffered mutations when the stream ends
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming) {
+      flushMutations();
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, flushMutations]);
 
   const refreshGraph = useCallback(async (userId: string) => {
     const [nodesRows, progressRows] = await Promise.all([
