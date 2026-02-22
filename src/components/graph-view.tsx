@@ -23,7 +23,6 @@ import {
   type BackendQuestion,
   createBranch,
   createNode,
-  DEFAULT_BRANCH_TITLES,
   deleteBranch,
   listBranches,
   listDependencyEdges,
@@ -439,15 +438,7 @@ export function GraphViewContainer() {
       setIsLoading(true);
       setError(null);
       try {
-        let branchRows = await listBranches(activeUserId);
-        if (!branchRows.length) {
-          await Promise.all(
-            DEFAULT_BRANCH_TITLES.map((title) =>
-              createBranch({ userId: activeUserId, title }),
-            ),
-          );
-          branchRows = await listBranches(activeUserId);
-        }
+        const branchRows = await listBranches(activeUserId);
         if (isCancelled) return;
 
         setBranches(branchRows);

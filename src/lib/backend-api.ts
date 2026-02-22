@@ -107,12 +107,6 @@ export type BackendAnswer = {
   createdAt: string;
 };
 
-export const DEFAULT_BRANCH_TITLES = [
-  "Data Structures & Algorithms",
-  "Systems",
-  "Discrete Math",
-];
-
 export const API_PREFIX =
   process.env.NEXT_PUBLIC_BACKEND_PROXY_PREFIX ?? "/backend-api";
 

@@ -134,7 +134,7 @@ export function AgentActivityCard({
         type="button"
         onClick={() => setCollapsed(false)}
         className={cn(
-          "fixed bottom-6 right-6 z-50",
+          "fixed top-6 right-6 z-50",
           "flex items-center gap-2 rounded-full px-4 py-2",
           "border border-[rgba(46,232,74,0.15)] bg-[rgba(17,34,20,0.85)]",
           "shadow-[0_8px_32px_rgba(0,0,0,0.4)] backdrop-blur-[16px]",
@@ -161,7 +161,7 @@ export function AgentActivityCard({
   return (
     <div
       className={cn(
-        "fixed bottom-6 right-6 z-50 w-80",
+        "fixed top-6 right-6 z-50 w-80",
         "rounded-xl border border-[rgba(46,232,74,0.15)] bg-[rgba(17,34,20,0.85)]",
         "shadow-[0_8px_32px_rgba(0,0,0,0.4)] backdrop-blur-[16px]",
         "text-white",
