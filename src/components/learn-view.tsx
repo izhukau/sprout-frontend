@@ -138,6 +138,14 @@ type LearnCard =
   | DrawCard
   | MiroSummaryCard;
 
+type BackendCard = {
+  id: string;
+  index: number;
+  explanation: string;
+  question: string | null;
+  questionType: AnswerMode | null;
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "ai";
@@ -925,14 +933,29 @@ export function LearnView() {
   const [nodeTitle, setNodeTitle] = useState<string | null>(null);
   const [nodeExplanation, setNodeExplanation] = useState<string | null>(null);
   const [isNodeLoading, setIsNodeLoading] = useState(false);
+  const [backendCards, setBackendCards] = useState<BackendCard[]>([]);
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const codeAnswerLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const codeAnswerOverlayRef = useRef<HTMLPreElement | null>(null);
 
-  const activeCard = CARDS[activeIndex] as LearnCard | undefined;
-  const isFinished = activeIndex >= CARDS.length;
+  // Use backend cards when available, otherwise fall back to hardcoded demo cards
+  const useBackendCards = isBackendChatEnabled && backendCards.length > 0;
+  const effectiveCards: LearnCard[] = useMemo(() => {
+    if (!useBackendCards) return CARDS;
+    return backendCards.map((bc) => ({
+      id: bc.id,
+      type: "text" as const,
+      title: bc.question ?? `Chunk ${bc.index + 1}`,
+      topic: "",
+      prompt: bc.explanation,
+      guidingQuestions: bc.question ? [bc.question] : [],
+    }));
+  }, [useBackendCards, backendCards]);
+
+  const activeCard = effectiveCards[activeIndex] as LearnCard | undefined;
+  const isFinished = activeIndex >= effectiveCards.length;
   const highlightedCodeAnswerNodes = useMemo(
     () => highlightCodeToNodes(codeAnswerInput),
     [codeAnswerInput],
@@ -1110,10 +1133,22 @@ export function LearnView() {
         if (cancelled) return;
         setNodeTitle(node.title);
         setNodeExplanation(content?.explanationMd ?? node.desc ?? null);
+        // Parse persisted cards
+        if (content?.cards) {
+          try {
+            const parsed = JSON.parse(content.cards) as BackendCard[];
+            setBackendCards(parsed);
+          } catch {
+            setBackendCards([]);
+          }
+        } else {
+          setBackendCards([]);
+        }
       } catch {
         if (cancelled) return;
         setNodeTitle(null);
         setNodeExplanation(null);
+        setBackendCards([]);
       } finally {
         if (!cancelled) setIsNodeLoading(false);
       }
@@ -1181,6 +1216,23 @@ export function LearnView() {
               isComplete: response.isComplete,
             },
           ]);
+
+          // Refresh persisted cards after tutor response
+          if (nodeId && channel === "answer") {
+            getActiveNodeContent(nodeId)
+              .then((content) => {
+                if (content?.cards) {
+                  try {
+                    setBackendCards(JSON.parse(content.cards) as BackendCard[]);
+                  } catch {
+                    /* ignore parse errors */
+                  }
+                }
+              })
+              .catch(() => {
+                /* ignore fetch errors */
+              });
+          }
         } catch (error) {
           setChatError(
             error instanceof Error ? error.message : "Failed to send message",
@@ -1211,6 +1263,7 @@ export function LearnView() {
       isBackendChatEnabled,
       chatSessionId,
       backendUserId,
+      nodeId,
     ],
   );
 
@@ -1281,7 +1334,7 @@ export function LearnView() {
   // Only show messages for cards already studied
   const visibleMessages = messages.filter((msg) => {
     if (!msg.linkedCardId) return true;
-    const idx = CARDS.findIndex((c) => c.id === msg.linkedCardId);
+    const idx = effectiveCards.findIndex((c) => c.id === msg.linkedCardId);
     return idx <= activeIndex;
   });
 
@@ -1394,8 +1447,8 @@ export function LearnView() {
     : visibleMessages;
 
   // Cards to render: completed + active only
-  const renderedCards = CARDS.slice(0, activeIndex + 1);
-  const nextCard = CARDS[activeIndex + 1] as LearnCard | undefined;
+  const renderedCards = effectiveCards.slice(0, activeIndex + 1);
+  const nextCard = effectiveCards[activeIndex + 1] as LearnCard | undefined;
   const currentAnswerDraft = useMemo(() => {
     if (answerMode === "text") return answerInput.trim();
     if (answerMode === "code") return codeAnswerInput.trim();
@@ -1498,7 +1551,7 @@ export function LearnView() {
                 className="text-sm font-medium"
                 style={{ color: "rgba(255,255,255,0.4)" }}
               >
-                {Math.min(activeIndex, CARDS.length)} / {CARDS.length}
+                {Math.min(activeIndex, effectiveCards.length)} / {effectiveCards.length}
               </span>
               <div
                 className="h-2 w-32 overflow-hidden rounded-full"
@@ -1507,7 +1560,7 @@ export function LearnView() {
                 <div
                   className="h-full rounded-full transition-all duration-700"
                   style={{
-                    width: `${(Math.min(activeIndex, CARDS.length) / CARDS.length) * 100}%`,
+                    width: `${(Math.min(activeIndex, effectiveCards.length) / effectiveCards.length) * 100}%`,
                     background: graphTheme.accent,
                   }}
                 />
@@ -1992,7 +2045,7 @@ export function LearnView() {
                       <SummaryCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         onContinue={handleContinue}
                       />
@@ -2001,7 +2054,7 @@ export function LearnView() {
                       <QuizCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         selectedOption={quizSelected[card.id] ?? null}
                         isSubmitted={quizSubmitted.has(card.id)}
@@ -2018,7 +2071,7 @@ export function LearnView() {
                       <CodeCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         value={
                           codeValues[card.id] !== undefined
@@ -2039,7 +2092,7 @@ export function LearnView() {
                       <TextCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         value={textValues[card.id] ?? ""}
                         isSubmitted={textSubmitted.has(card.id)}
@@ -2056,7 +2109,7 @@ export function LearnView() {
                       <MiroCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         onContinue={handleContinue}
                       />
@@ -2065,7 +2118,7 @@ export function LearnView() {
                       <VoiceCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         voiceState={voiceStates[card.id] ?? "idle"}
                         onVoiceState={(s) =>
@@ -2078,7 +2131,7 @@ export function LearnView() {
                       <DrawCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         isSubmitted={drawSubmitted.has(card.id)}
                         onSubmit={() =>
@@ -2091,7 +2144,7 @@ export function LearnView() {
                       <MiroSummaryCardUI
                         card={card}
                         cardNumber={i + 1}
-                        total={CARDS.length}
+                        total={effectiveCards.length}
                         state={state}
                         embedUrl={miroEmbedUrls[card.id] ?? null}
                         onEmbedUrl={(url) =>
@@ -2114,7 +2167,7 @@ export function LearnView() {
                   <LockedCardUI
                     card={nextCard}
                     cardNumber={activeIndex + 2}
-                    total={CARDS.length}
+                    total={effectiveCards.length}
                   />
                 </div>
               )}
@@ -2247,7 +2300,7 @@ export function LearnView() {
                 )}
               {sidebarMessages.map((msg) => {
                 const cardIdx = msg.linkedCardId
-                  ? CARDS.findIndex((c) => c.id === msg.linkedCardId)
+                  ? effectiveCards.findIndex((c) => c.id === msg.linkedCardId)
                   : -1;
                 const isClickable = msg.linkedCardId !== null && cardIdx !== -1;
                 return (

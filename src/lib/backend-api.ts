@@ -23,6 +23,7 @@ export type BackendNodeContent = {
   id: string;
   nodeId: string;
   explanationMd: string;
+  cards: string | null; // JSON: [{ id, index, explanation, question, questionType }]
   visualizationKind: string | null;
   visualizationPayload: string | null;
   generatedByModel: string | null;
@@ -79,6 +80,7 @@ export type BackendAssessment = {
   title: string | null;
   createdAt: string;
   updatedAt?: string;
+  completedAt: string | null;
 };
 
 export type BackendQuestion = {
@@ -327,6 +329,35 @@ export async function submitAssessmentAnswer(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function patchAssessment(
+  assessmentId: string,
+  data: { completedAt?: string; title?: string },
+): Promise<BackendAssessment> {
+  return apiFetch<BackendAssessment>(`/api/assessments/${assessmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getConceptDiagnostic(params: {
+  conceptId: string;
+  userId: string;
+}): Promise<{
+  agent: string;
+  status: string;
+  conceptNodeId: string;
+  assessment: BackendAssessment;
+  questions: BackendQuestion[];
+  answeredCount: number;
+  requiredAnswers: number;
+  isComplete: boolean;
+}> {
+  const query = new URLSearchParams({ userId: params.userId });
+  return apiFetch(
+    `/api/agents/concepts/${params.conceptId}/diagnostic?${query.toString()}`,
+  );
 }
 
 export async function getActiveNodeContent(
