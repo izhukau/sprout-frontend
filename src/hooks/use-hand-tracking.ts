@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export type HandPosition = { x: number; y: number; z: number } | null;
+export type HandPosition = { x: number; y: number; z: number; pinch: number } | null;
 
 export function useHandTracking(
   wsUrl = "ws://localhost:8765",
@@ -45,7 +45,7 @@ export function useHandTracking(
         if (!alive) return;
         try {
           const data = JSON.parse(event.data as string);
-          setHandPos({ x: data.x, y: data.y, z: data.z });
+          setHandPos({ x: data.x, y: data.y, z: data.z, pinch: data.pinch ?? 0.2 });
         } catch {
           // ignore malformed messages
         }

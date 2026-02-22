@@ -22,7 +22,7 @@ type ForceGraphViewProps = {
   highlightedBranchId: string | null;
   focusedNodeId: string | null;
   onNodeClick: (nodeId: string) => void;
-  handPos?: { x: number; y: number; z: number } | null;
+  handPos?: { x: number; y: number; z: number; pinch: number } | null;
 };
 
 export function ForceGraphView({
@@ -41,6 +41,11 @@ export function ForceGraphView({
   const focusNodeRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const initialFitDone = useRef(false);
   const smoothHandRef = useRef<{ x: number; y: number } | null>(null);
+  const targetHandRef = useRef<{ x: number; y: number; pinch: number } | null>(null);
+  const smoothRRef = useRef<number>(350);   // current lerped camera radius
+  const rafRef = useRef<number | null>(null);
+  const highlightedBranchIdRef = useRef(highlightedBranchId);
+  const orbitCenterRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 });
   const graphDataRef = useRef<{ nodes: ForceNode[]; links: ForceLink[] }>({
     nodes: [],
     links: [],
@@ -169,38 +174,88 @@ export function ForceGraphView({
     fg.zoomToFit(600, 0);
   }, [highlightedBranchId]);
 
-  // Orbit camera based on hand position (only in global view, no branch focused)
+  // Keep refs current so the rAF loop always reads fresh values without restarts
   useEffect(() => {
-    if (!handPos || highlightedBranchId) return;
+    highlightedBranchIdRef.current = highlightedBranchId;
+  }, [highlightedBranchId]);
 
-    const fg = graphRef.current;
-    if (!fg) return;
-
-    // EMA smoothing to reduce jitter
-    if (!smoothHandRef.current) {
-      smoothHandRef.current = { x: handPos.x, y: handPos.y };
-    } else {
-      smoothHandRef.current.x = smoothHandRef.current.x * 0.75 + handPos.x * 0.25;
-      smoothHandRef.current.y = smoothHandRef.current.y * 0.75 + handPos.y * 0.25;
+  // Orbit center for hand tracking: origin when no branch, branch centroid when selected
+  useEffect(() => {
+    if (!highlightedBranchId) {
+      orbitCenterRef.current = { x: 0, y: 0, z: 0 };
+      return;
     }
+    const branchNodes = graphData.nodes.filter(
+      (n) => n.branchId === highlightedBranchId,
+    ) as (ForceNode & { x?: number; y?: number; z?: number })[];
+    if (branchNodes.length === 0) {
+      orbitCenterRef.current = { x: 0, y: 0, z: 0 };
+      return;
+    }
+    const cx =
+      branchNodes.reduce((sum, n) => sum + (n.x ?? 0), 0) / branchNodes.length;
+    const cy =
+      branchNodes.reduce((sum, n) => sum + (n.y ?? 0), 0) / branchNodes.length;
+    const cz =
+      branchNodes.reduce((sum, n) => sum + (n.z ?? 0), 0) / branchNodes.length;
+    orbitCenterRef.current = { x: cx, y: cy, z: cz };
+  }, [highlightedBranchId, graphData.nodes]);
 
-    const cam = fg.camera?.();
-    const r = cam ? cam.position.length() : 350;
+  useEffect(() => {
+    targetHandRef.current = handPos
+      ? { x: handPos.x, y: handPos.y, pinch: handPos.pinch }
+      : null;
+    if (!handPos) smoothHandRef.current = null; // reset on hand loss
+  }, [handPos]);
 
-    // Map hand x [0,1] → azimuth [-π, π], y [0,1] → elevation [π/3, -π/3]
-    const theta = (smoothHandRef.current.x - 0.5) * 2 * Math.PI;
-    const phi = (0.5 - smoothHandRef.current.y) * (Math.PI / 3);
+  // rAF loop — lerps camera at 60fps toward target (works for both global and branch-selected views)
+  useEffect(() => {
+    const animate = () => {
+      rafRef.current = requestAnimationFrame(animate);
 
-    fg.cameraPosition(
-      {
-        x: r * Math.cos(phi) * Math.sin(theta),
-        y: r * Math.sin(phi),
-        z: r * Math.cos(phi) * Math.cos(theta),
-      },
-      { x: 0, y: 0, z: 0 },
-      50,
-    );
-  }, [handPos, highlightedBranchId]);
+      const target = targetHandRef.current;
+      if (!target) return;
+
+      const fg = graphRef.current;
+      if (!fg) return;
+
+      const center = orbitCenterRef.current;
+
+      // Lerp smoothed x/y toward target each frame
+      if (!smoothHandRef.current) {
+        smoothHandRef.current = { x: target.x, y: target.y };
+      } else {
+        smoothHandRef.current.x += (target.x - smoothHandRef.current.x) * 0.06;
+        smoothHandRef.current.y += (target.y - smoothHandRef.current.y) * 0.06;
+      }
+
+      // Map pinch distance [0.02, 0.35] → camera radius [80, 550]
+      const clampedPinch = Math.max(0.02, Math.min(0.35, target.pinch));
+      const targetR = 80 + ((clampedPinch - 0.02) / (0.35 - 0.02)) * 470;
+      smoothRRef.current += (targetR - smoothRRef.current) * 0.05;
+      const r = smoothRRef.current;
+
+      const theta = (smoothHandRef.current.x - 0.5) * 2 * Math.PI;
+      const phi = (0.5 - smoothHandRef.current.y) * (Math.PI / 3);
+
+      // duration=0: we own the interpolation, no queued transitions
+      // Orbit around center (origin when no branch, branch centroid when selected)
+      fg.cameraPosition(
+        {
+          x: center.x + r * Math.cos(phi) * Math.sin(theta),
+          y: center.y + r * Math.sin(phi),
+          z: center.z + r * Math.cos(phi) * Math.cos(theta),
+        },
+        { x: center.x, y: center.y, z: center.z },
+        0,
+      );
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []); // runs once, reads all live state via refs
 
   const focusAndSelect = useCallback(
     // biome-ignore lint/suspicious/noExplicitAny: force-graph node type
