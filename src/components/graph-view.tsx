@@ -1015,16 +1015,6 @@ export function GraphViewContainer() {
         <HandCursor handPos={handPos} connected={handConnected} />
 
         {view.level === "global" && (
-<<<<<<< HEAD
-          <ForceGraphView
-            branches={branches}
-            nodes={graphNodes}
-            highlightedBranchId={highlightedBranchId}
-            focusedNodeId={focusedNodeId}
-            onNodeClick={handleForceNodeClick}
-            handPos={handPos}
-          />
-=======
           <>
             <ForceGraphView
               branches={branches}
@@ -1033,6 +1023,7 @@ export function GraphViewContainer() {
               highlightedBranchId={highlightedBranchId}
               focusedNodeId={focusedNodeId}
               onNodeClick={handleForceNodeClick}
+              handPos={handPos}
             />
             {highlightedBranchId && (
               <button
@@ -1048,7 +1039,6 @@ export function GraphViewContainer() {
               </button>
             )}
           </>
->>>>>>> 0e9570ee400cc13d7330ee3c84ed10cdf18e2dbb
         )}
         {(view.level === "branch" || view.level === "concept") && (
           <GraphCanvas
