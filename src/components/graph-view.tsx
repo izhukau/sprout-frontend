@@ -9,6 +9,8 @@ import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { useAuth } from "@/hooks/use-auth";
+import { useHandTracking } from "@/hooks/use-hand-tracking";
+import { HandCursor } from "@/components/hand-cursor";
 import {
   type BackendBranch,
   type BackendEdge,
@@ -198,6 +200,11 @@ export function GraphViewContainer() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
+  const [handTrackingEnabled, setHandTrackingEnabled] = useState(false);
+  const { handPos, connected: handConnected } = useHandTracking(
+    "ws://localhost:8765",
+    handTrackingEnabled,
+  );
 
   const branchRootByBranchId = useMemo(() => {
     const map: Record<string, string> = {};
@@ -715,6 +722,43 @@ export function GraphViewContainer() {
           </div>
         )}
 
+        {/* Hand tracking toggle */}
+        <button
+          type="button"
+          onClick={() => setHandTrackingEnabled((prev) => !prev)}
+          title={handTrackingEnabled ? "Disable hand tracking" : "Enable hand tracking"}
+          className={[
+            "absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
+            handTrackingEnabled
+              ? "border-green-500/60 bg-green-500/20 text-green-300"
+              : "border-white/10 bg-[rgba(10,26,15,0.8)] text-white/40 hover:border-white/20 hover:text-white/70",
+          ].join(" ")}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2" />
+            <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2" />
+            <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+            <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+          </svg>
+          {handTrackingEnabled
+            ? handConnected
+              ? "Hand tracking on"
+              : "Connecting…"
+            : "Hand tracking"}
+        </button>
+
+        <HandCursor handPos={handPos} connected={handConnected} />
+
         {view.level === "global" && (
           <ForceGraphView
             branches={branches}
@@ -722,6 +766,7 @@ export function GraphViewContainer() {
             highlightedBranchId={highlightedBranchId}
             focusedNodeId={focusedNodeId}
             onNodeClick={handleForceNodeClick}
+            handPos={handPos}
           />
         )}
         {(view.level === "branch" || view.level === "concept") && (

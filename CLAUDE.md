@@ -1,94 +1,173 @@
-# CLAUDE.md
+s\specthin\miniconda3\lib\site-packages (from python-dateutil>=2.7->matplotlib->mediapipe) (1.17.0)
+PS D:\.projects\hackeurope\hackeurope_backend> pip install websockets==12.0 --no-cache-dir --default-timeout=100 
+Collecting websockets==12.0
+  Downloading websockets-12.0-py3-none-any.whl.metadata (6.6 kB)
+Downloading websockets-12.0-py3-none-any.whl (118 kB)
+Installing collected packages: websockets
+Successfully installed websockets-12.0
+PS D:\.projects\hackeurope\hackeurope_backend> python backend.py                                                
+WebSocket Server started on ws://localhost:8765
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
+Next.js Frontend Connected!
+connection handler failed
+Traceback (most recent call last):
+  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
+    await self.ws_handler(self)
+  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
+    mp_hands = mp.solutions.hands
+               ^^^^^^^^^^^^
+AttributeError: module 'mediapipe' has no attribute 'solutions'
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project
 
-Sprout is an AI-powered adaptive learning platform. Built with Next.js 16 (App Router), React 19, TypeScript, React Flow (`@xyflow/react`), and react-force-graph-3d (with d3-force for branch clustering). Node layout is computed by Dagre (`@dagrejs/dagre`).
 
-### Product Vision
+LAST TIME THIS CODE WORKED PERFECTLY, USE ITS TECHNIQUES:
 
-**Input:** Text, file uploads, or voice (ElevenLabs) to define what to learn.
 
-**Graph hierarchy (3 levels):**
-1. **Global graph** — A mind map of all knowledge across projects. If a topic was studied in a previous pathway, nodes connect across projects.
-2. **Linear pathway** — A linear branch of high-level topic nodes forming the study path (generated from learning objectives, can integrate professor-assigned tasks).
-3. **Subgraph per node** — Each pathway node expands into a non-linear subgraph where each node has:
-   - **Learn:** Flashcards / text content
-   - **Practice/Test:** AI-chosen format — handwritten (Miro), code, text explanation. Includes a Hint button that sends context to chat.
-   - **Recap:** Spaced-repetition checkpoints; must complete recap to unlock the next node.
+import cv2
+import numpy as np
+import mediapipe as mp
+import math
 
-**Edges** represent health/progress toward the next node. Node accuracy is shown via color shading and on hover.
+# Initialize MediaPipe Legacy API
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
+mp_draw = mp.solutions.drawing_utils
 
-**Dynamic graph generation:** The linear pathway (concepts) is generated upfront by AI from the topic. Subconcepts within each node are generated dynamically when the user first enters that node — not ahead of time. Before starting a topic, the user takes a baseline assessment (background selection + questions) to calibrate difficulty. Each subconcept node contains: 1 dense paragraph with all info + visualizations if needed, followed by active recall questions (MCQs or open-ended). Hints are personalized — the LLM references previous successful interactions with the user to frame hints effectively.
+cap = cv2.VideoCapture(0)
+canvas = None
+prev_x, prev_y = 0, 0
 
-**Data model:** Topics → Concepts → Subconcepts.
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-**Multi-agent architecture:** A voice agent (ElevenLabs) talks with the user sharing a transcript as common knowledge, while a graph agent updates graphs in real time — both agents communicate concurrently.
+    frame = cv2.flip(frame, 1)
 
-**Engagement metrics:** Time, voice data (pauses etc.), graph progress rate, test/recap success rate, base knowledge level, hint usage.
+    if canvas is None:
+        canvas = np.zeros_like(frame)
 
-**Predictive features:** Approximate exam score, career progression timeline, adaptive study pathway.
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb_frame)
 
-**Business model:** B2B (universities/companies/schools upload internal docs) + B2C (individual learners, student discounts).
+    if result.multi_hand_landmarks:
+        for hand_landmarks in result.multi_hand_landmarks:
+            h, w, c = frame.shape
+            
+            # 1. Get coordinates for Thumb (4), Index (8), and Middle Finger (12)
+            thumb_x = int(hand_landmarks.landmark[4].x * w)
+            thumb_y = int(hand_landmarks.landmark[4].y * h)
+            
+            index_x = int(hand_landmarks.landmark[8].x * w)
+            index_y = int(hand_landmarks.landmark[8].y * h)
+            
+            middle_x = int(hand_landmarks.landmark[12].x * w)
+            middle_y = int(hand_landmarks.landmark[12].y * h)
 
-## Commands
+            # 2. Calculate distances for both gestures
+            draw_distance = math.hypot(index_x - thumb_x, index_y - thumb_y)
+            erase_distance = math.hypot(middle_x - thumb_x, middle_y - thumb_y)
 
-```bash
-npm run dev       # Start dev server
-npm run build     # Production build
-npm run lint      # Lint with Biome
-npm run format    # Format with Biome (auto-write)
-```
+            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            
+            # Draw hover indicators
+            cv2.circle(frame, (index_x, index_y), 8, (0, 255, 0), -1)   # Green for draw hover
+            cv2.circle(frame, (middle_x, middle_y), 8, (0, 0, 255), -1) # Red for erase hover
 
-No test runner is configured yet.
+            # 3. Gesture Logic
+            if draw_distance < 40:
+                # DRAWING MODE (Blue line)
+                if prev_x == 0 and prev_y == 0:
+                    prev_x, prev_y = index_x, index_y
+                
+                cv2.line(canvas, (prev_x, prev_y), (index_x, index_y), (255, 0, 0), 5)
+                prev_x, prev_y = index_x, index_y
+                
+            elif erase_distance < 40:
+                # ERASING MODE (Thick Black line)
+                if prev_x == 0 and prev_y == 0:
+                    prev_x, prev_y = middle_x, middle_y
+                
+                # Draw black on the canvas to "erase"
+                cv2.line(canvas, (prev_x, prev_y), (middle_x, middle_y), (0, 0, 0), 50)
+                
+                # Draw a white circle on the video feed to show the size of the eraser
+                cv2.circle(frame, (middle_x, middle_y), 25, (255, 255, 255), 2)
+                prev_x, prev_y = middle_x, middle_y
+                
+            else:
+                # HOVERING MODE
+                prev_x, prev_y = 0, 0
+    else:
+        prev_x, prev_y = 0, 0
 
-## Architecture
+    # 4. Blending Logic (Unchanged)
+    gray_canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
+    _, inv_mask = cv2.threshold(gray_canvas, 1, 255, cv2.THRESH_BINARY_INV)
+    frame_bg = cv2.bitwise_and(frame, frame, mask=inv_mask)
+    combined = cv2.bitwise_or(frame_bg, canvas)
 
-### Routes
+    cv2.imshow("Virtual Air Canvas", combined)
 
-- `/` — Default Next.js starter (untouched)
-- `/graph` — Main graph visualization (active development)
-- `/login` — Login page (glassmorphism UI, green #2EE84A accent)
-- `/register` — Registration page
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('c'):
+        canvas = np.zeros_like(frame)
+    if key == 27:
+        break
 
-### Authentication
-
-- `src/contexts/auth-context.tsx` — AuthContext provider (login/register/logout via `/api/auth/*`)
-- `src/hooks/use-auth.ts` — Consumer hook with context validation
-- `src/proxy.ts` — Next.js middleware for route protection. Checks `access_token` cookie; redirects authenticated users away from auth pages to `/graph`. `PROTECTED_ROUTES` is currently empty (no routes gated yet).
-
-### Graph data flow
-
-```
-mockNodes + mockBranches (lib/mock-data.ts)
-    ↓
-lib/graph-utils.ts — Utility functions:
-  buildBranchColorMap()        — Golden-angle hue spacing for branch colors
-  buildEdgesFromNodes()        — Build edges from parent relationships
-  getConceptNodesForBranch()   — Filter concepts for a branch
-  getSubconceptNodesForConcept() — Get subconcepts for a concept
-  toForceGraphData()           — Convert to react-force-graph-3d format
-    ↓
-GraphViewContainer (graph-view.tsx) — Orchestrator managing view level, highlighted branch, expanded/focused node
-  ├── ForceGraphView (force-graph-view.tsx) — 3D force-directed graph (global level) using react-force-graph-3d + d3-force
-  ├── GraphCanvas (graph-canvas.tsx)        — 2D React Flow canvas (branch/concept levels) with Dagre layout (TB, 280×52)
-  ├── GraphNode (graph-node.tsx)            — Custom node with 3 variants: root (Globe), concept (BookOpen), subconcept (Layers). Concept nodes expand inline with summary + "Open Subconcepts" button.
-  └── GraphSidebar (graph-sidebar.tsx)      — Three-level navigation: branches → concepts → subconcepts
-```
-
-**Three view levels:** global (3D force graph with branch clustering) → branch (2D linear concept chain) → concept (2D non-linear subconcept subgraph).
-
-**Frontier detection:** Edges from completed → incomplete nodes are marked "frontier" (animated). Frontier nodes have ambient glow.
-
-Graph data is currently hardcoded mock data in `lib/mock-data.ts` (3 branches, 9 concepts, 36 subconcepts, 1 root = 46 nodes). No backend or data-fetching layer exists yet.
-
-## Key Conventions
-
-- **Styling:** Tailwind CSS v4 (PostCSS plugin mode) + shadcn/ui (new-york style, neutral base, oklch color tokens in `globals.css`)
-- **Linting/Formatting:** Biome 2 (not ESLint/Prettier). 2-space indent.
-- **Path alias:** `@/*` maps to `./src/*`
-- **React Compiler** is enabled (`reactCompiler: true` in next.config.ts)
-- **Icons:** lucide-react
-- Component variants use `class-variance-authority` (cva)
-- `cn()` helper in `lib/utils.ts` combines clsx + tailwind-merge
+cap.release()
+cv2.destroyAllWindows()
