@@ -12,7 +12,6 @@ import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  API_PREFIX,
   type BackendBranch,
   type BackendEdge,
   type BackendNode,
@@ -26,6 +25,7 @@ import {
   listDependencyEdges,
   listNodes,
   listProgress,
+  SSE_BASE_URL,
   uploadDocuments,
 } from "@/lib/backend-api";
 import {
@@ -222,6 +222,11 @@ export function GraphViewContainer() {
     switch (mutation.kind) {
       case "node_created": {
         const node = mutation.node;
+        // Sync ref immediately so subsequent edge_created (flushed from
+        // the SSE buffer in the same microtask) can find this node.
+        if (!backendNodesRef.current.some((n) => n.id === node.id)) {
+          backendNodesRef.current = [...backendNodesRef.current, node];
+        }
         setBackendNodes((prev) => {
           if (prev.some((n) => n.id === node.id)) return prev;
           return [...prev, node];
@@ -300,6 +305,10 @@ export function GraphViewContainer() {
       }
 
       case "node_removed": {
+        // Sync ref immediately (mirrors node_created symmetry)
+        backendNodesRef.current = backendNodesRef.current.filter(
+          (n) => n.id !== mutation.nodeId,
+        );
         // Mark as removing for animation, then remove after delay
         setGraphNodes((prev) =>
           prev.map((n) =>
@@ -541,8 +550,9 @@ export function GraphViewContainer() {
       if (!rootId) return;
 
       seedKnownNodes(backendNodesRef.current.map((n) => n.id));
-      void startStream(`${API_PREFIX}/api/agents/topics/${rootId}/run`, {
+      void startStream(`${SSE_BASE_URL}/api/agents/topics/${rootId}/run`, {
         userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
       });
     },
     [activeUserId, branchRootByBranchId, seedKnownNodes, startStream],
@@ -574,8 +584,9 @@ export function GraphViewContainer() {
       if (!activeUserId) return;
 
       seedKnownNodes(backendNodesRef.current.map((n) => n.id));
-      void startStream(`${API_PREFIX}/api/agents/concepts/${conceptId}/run`, {
+      void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
         userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
       });
     },
     [
@@ -702,13 +713,17 @@ export function GraphViewContainer() {
         ...mapBackendNodesToGraphNodes([rootNode], completedSetRef.current),
       ]);
 
+      // Auto-focus the new branch so the user sees it grow in isolation
+      setHighlightedBranchId(newBranch.id);
+
       // Start SSE stream for topic agent (fire-and-forget; progress shown in activity card)
       seedKnownNodes([
         ...backendNodesRef.current.map((n) => n.id),
         rootNode.id,
       ]);
-      void startStream(`${API_PREFIX}/api/agents/topics/${rootNode.id}/run`, {
+      void startStream(`${SSE_BASE_URL}/api/agents/topics/${rootNode.id}/run`, {
         userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
       });
     },
     [activeUserId, seedKnownNodes, startStream],
@@ -833,6 +848,12 @@ export function GraphViewContainer() {
     subconceptEdgesByConceptId,
   ]);
 
+  const allDependencyEdges = useMemo(() => {
+    const conceptEdges = Object.values(conceptEdgesByRootId).flat();
+    const subconceptEdges = Object.values(subconceptEdgesByConceptId).flat();
+    return [...conceptEdges, ...subconceptEdges];
+  }, [conceptEdgesByRootId, subconceptEdgesByConceptId]);
+
   if (isLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[#0A1A0F] text-sm text-[#3DBF5A]/80">
@@ -868,6 +889,7 @@ export function GraphViewContainer() {
           <ForceGraphView
             branches={branches}
             nodes={graphNodes}
+            dependencyEdges={allDependencyEdges}
             highlightedBranchId={highlightedBranchId}
             focusedNodeId={focusedNodeId}
             onNodeClick={handleForceNodeClick}

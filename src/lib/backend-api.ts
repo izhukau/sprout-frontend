@@ -90,6 +90,14 @@ export const DEFAULT_BRANCH_TITLES = [
 export const API_PREFIX =
   process.env.NEXT_PUBLIC_BACKEND_PROXY_PREFIX ?? "/backend-api";
 
+/**
+ * Direct backend origin for SSE streaming endpoints.
+ * Next.js rewrites (API_PREFIX) buffer responses, breaking real-time SSE.
+ * SSE endpoints connect directly to the backend instead.
+ */
+export const SSE_BASE_URL =
+  process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000";
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {
