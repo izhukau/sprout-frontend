@@ -76,7 +76,7 @@ export function ConceptDiagnosticChat({
     {
       id: "intro",
       role: "ai",
-      text: `Optional pre-check for "${conceptTitle}". Ten quick questions (single pass, no repeats). Answers help personalize the concept graph and tutoring later.`,
+      text: `Optional pre-check for "${conceptTitle}". ${questions.length} quick questions (single pass, no repeats). Answers help personalize the concept graph and tutoring later.`,
     },
   ]);
   const [answeredMap, setAnsweredMap] = useState<Map<string, BackendAnswer>>(
@@ -189,9 +189,7 @@ export function ConceptDiagnosticChat({
   };
 
   const progress =
-    (answeredMap.size /
-      Math.max(requiredAnswers, questions.length || requiredAnswers)) *
-    100;
+    questions.length > 0 ? (answeredMap.size / questions.length) * 100 : 0;
 
   return (
     <div
@@ -224,8 +222,8 @@ export function ConceptDiagnosticChat({
                 className="text-xs"
                 style={{ color: "rgba(255,255,255,0.5)" }}
               >
-                Optional: 10 quick questions to improve personalization. Close
-                anytime to skip.
+                Optional: {questions.length} quick questions to improve
+                personalization. Close anytime to skip.
               </div>
             </div>
           </div>

@@ -36,7 +36,7 @@ import {
   getConceptNodesForBranch,
   getSubconceptNodesForConcept,
 } from "@/lib/graph-utils";
-import { getConceptDiagnostic } from "@/lib/backend-api";
+import { getConceptDiagnostic, patchAssessment } from "@/lib/backend-api";
 
 function nodeVariantFromType(type: BackendNode["type"]): NodeVariant {
   return type;
@@ -156,9 +156,6 @@ export function GraphViewContainer() {
     questions: BackendQuestion[];
     requiredAnswers: number;
   } | null>(null);
-  const [dismissedDiagnosticConcepts, setDismissedDiagnosticConcepts] =
-    useState<Set<string>>(new Set());
-
   const [branches, setBranches] = useState<BackendBranch[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
@@ -192,14 +189,13 @@ export function GraphViewContainer() {
         setPendingDiagnostic(null);
         return;
       }
-      if (dismissedDiagnosticConcepts.has(view.conceptId)) return;
       try {
         const result = await getConceptDiagnostic({
           conceptId: view.conceptId,
           userId: activeUserId,
         });
         if (cancelled) return;
-        if (result.answeredCount >= result.requiredAnswers) {
+        if (result.isComplete) {
           setPendingDiagnostic(null);
           return;
         }
@@ -221,7 +217,7 @@ export function GraphViewContainer() {
     return () => {
       cancelled = true;
     };
-  }, [view, activeUserId, dismissedDiagnosticConcepts]);
+  }, [view, activeUserId]);
 
   const completedSetRef = useRef<Set<string>>(new Set());
 
@@ -981,7 +977,7 @@ export function GraphViewContainer() {
               : "Enable hand tracking"
           }
           className={[
-            "absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
+            "absolute bottom-44 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
             handTrackingEnabled
               ? "border-green-500/60 bg-green-500/20 text-green-300"
               : "border-white/10 bg-[rgba(10,26,15,0.8)] text-white/40 hover:border-white/20 hover:text-white/70",
@@ -1082,11 +1078,10 @@ export function GraphViewContainer() {
             resumeConceptRun(pendingDiagnostic.conceptId);
           }}
           onClose={() => {
+            const assessmentId = pendingDiagnostic.assessment.id;
             setPendingDiagnostic(null);
-            setDismissedDiagnosticConcepts((prev) => {
-              const next = new Set(prev);
-              next.add(pendingDiagnostic.conceptId);
-              return next;
+            void patchAssessment(assessmentId, {
+              completedAt: new Date().toISOString(),
             });
           }}
         />
