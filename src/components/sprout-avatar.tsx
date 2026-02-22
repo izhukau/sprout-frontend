@@ -143,6 +143,8 @@ export function SproutAvatar({
         <svg
           viewBox="0 0 320 420"
           xmlns="http://www.w3.org/2000/svg"
+          role="img"
+          aria-label="Sprout tutor avatar"
           style={{
             width: "100%",
             height: "100%",
@@ -150,6 +152,7 @@ export function SproutAvatar({
               "drop-shadow(0 20px 40px rgba(28,72,21,0.4)) drop-shadow(0 8px 16px rgba(0,0,0,0.15))",
           }}
         >
+          <title>Sprout tutor avatar</title>
           <defs>
             <radialGradient id="sa-bodyGrad" cx="38%" cy="32%" r="60%">
               <stop offset="0%" stopColor="#7fcb76" />
@@ -191,55 +194,206 @@ export function SproutAvatar({
               <stop offset="100%" stopColor="#3e2723" />
             </linearGradient>
             <filter id="sa-shadow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="4" dy="8" stdDeviation="6" floodColor="rgba(0,0,0,0.25)" />
+              <feDropShadow
+                dx="4"
+                dy="8"
+                stdDeviation="6"
+                floodColor="rgba(0,0,0,0.25)"
+              />
             </filter>
             <filter id="sa-leafShadow">
-              <feDropShadow dx="2" dy="3" stdDeviation="3" floodColor="rgba(0,0,0,0.2)" />
+              <feDropShadow
+                dx="2"
+                dy="3"
+                stdDeviation="3"
+                floodColor="rgba(0,0,0,0.2)"
+              />
             </filter>
           </defs>
 
           {/* POT */}
-          <path d="M95 340 L110 385 L210 385 L225 340 Z" fill="url(#sa-potGrad)" filter="url(#sa-shadow)" />
-          <path d="M100 340 L112 375 L145 365 L120 340 Z" fill="rgba(255,255,255,0.13)" />
-          <rect x="88" y="330" width="144" height="18" rx="9" fill="url(#sa-rimGrad)" filter="url(#sa-shadow)" />
-          <rect x="95" y="354" width="130" height="5" rx="2.5" fill="rgba(28,72,21,0.18)" />
+          <path
+            d="M95 340 L110 385 L210 385 L225 340 Z"
+            fill="url(#sa-potGrad)"
+            filter="url(#sa-shadow)"
+          />
+          <path
+            d="M100 340 L112 375 L145 365 L120 340 Z"
+            fill="rgba(255,255,255,0.13)"
+          />
+          <rect
+            x="88"
+            y="330"
+            width="144"
+            height="18"
+            rx="9"
+            fill="url(#sa-rimGrad)"
+            filter="url(#sa-shadow)"
+          />
+          <rect
+            x="95"
+            y="354"
+            width="130"
+            height="5"
+            rx="2.5"
+            fill="rgba(28,72,21,0.18)"
+          />
           <ellipse cx="160" cy="330" rx="62" ry="10" fill="url(#sa-soilGrad)" />
-          <ellipse cx="145" cy="327" rx="20" ry="4" fill="rgba(255,255,255,0.08)" />
+          <ellipse
+            cx="145"
+            cy="327"
+            rx="20"
+            ry="4"
+            fill="rgba(255,255,255,0.08)"
+          />
 
           {/* STEM */}
-          <rect x="153" y="240" width="14" height="100" rx="7" fill="url(#sa-stemGrad)" filter="url(#sa-shadow)" />
-          <rect x="156" y="245" width="4" height="90" rx="2" fill="rgba(255,255,255,0.28)" />
+          <rect
+            x="153"
+            y="240"
+            width="14"
+            height="100"
+            rx="7"
+            fill="url(#sa-stemGrad)"
+            filter="url(#sa-shadow)"
+          />
+          <rect
+            x="156"
+            y="245"
+            width="4"
+            height="90"
+            rx="2"
+            fill="rgba(255,255,255,0.28)"
+          />
 
           {/* LEAVES */}
           <g className="sprout-leaf-left" filter="url(#sa-leafShadow)">
-            <path d="M160 280 C130 250, 80 255, 75 225 C100 210, 150 230, 160 280 Z" fill="url(#sa-leafLGrad)" />
-            <path d="M160 278 C140 255, 110 238, 80 228" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+            <path
+              d="M160 280 C130 250, 80 255, 75 225 C100 210, 150 230, 160 280 Z"
+              fill="url(#sa-leafLGrad)"
+            />
+            <path
+              d="M160 278 C140 255, 110 238, 80 228"
+              stroke="rgba(255,255,255,0.3)"
+              strokeWidth="1.5"
+              fill="none"
+              strokeLinecap="round"
+            />
           </g>
           <g className="sprout-leaf-right" filter="url(#sa-leafShadow)">
-            <path d="M160 270 C190 240, 240 245, 245 215 C220 200, 170 220, 160 270 Z" fill="url(#sa-leafRGrad)" />
-            <path d="M160 268 C180 245, 210 228, 242 218" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+            <path
+              d="M160 270 C190 240, 240 245, 245 215 C220 200, 170 220, 160 270 Z"
+              fill="url(#sa-leafRGrad)"
+            />
+            <path
+              d="M160 268 C180 245, 210 228, 242 218"
+              stroke="rgba(255,255,255,0.3)"
+              strokeWidth="1.5"
+              fill="none"
+              strokeLinecap="round"
+            />
           </g>
 
           {/* HEAD */}
-          <ellipse cx="160" cy="178" rx="95" ry="98" fill="url(#sa-bodyGrad)" filter="url(#sa-shadow)" />
-          <ellipse cx="160" cy="178" rx="95" ry="98" fill="url(#sa-shineGrad)" />
+          <ellipse
+            cx="160"
+            cy="178"
+            rx="95"
+            ry="98"
+            fill="url(#sa-bodyGrad)"
+            filter="url(#sa-shadow)"
+          />
+          <ellipse
+            cx="160"
+            cy="178"
+            rx="95"
+            ry="98"
+            fill="url(#sa-shineGrad)"
+          />
 
           {/* GRADUATION CAP */}
           <ellipse cx="160" cy="98" rx="55" ry="10" fill="#222" />
-          <rect x="105" y="82" width="110" height="18" rx="5" fill="url(#sa-capGrad)" />
-          <rect x="100" y="72" width="120" height="14" rx="3" fill="url(#sa-capGrad)" />
+          <rect
+            x="105"
+            y="82"
+            width="110"
+            height="18"
+            rx="5"
+            fill="url(#sa-capGrad)"
+          />
+          <rect
+            x="100"
+            y="72"
+            width="120"
+            height="14"
+            rx="3"
+            fill="url(#sa-capGrad)"
+          />
           <ellipse cx="160" cy="72" rx="60" ry="8" fill="#1a1a1a" />
-          <rect x="105" y="87" width="110" height="5" rx="2" fill="#FFA025" opacity="0.9" />
-          <ellipse cx="140" cy="70" rx="25" ry="4" fill="rgba(255,255,255,0.1)" />
-          <path d="M215 72 Q225 90 220 115" stroke="#FFA025" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+          <rect
+            x="105"
+            y="87"
+            width="110"
+            height="5"
+            rx="2"
+            fill="#FFA025"
+            opacity="0.9"
+          />
+          <ellipse
+            cx="140"
+            cy="70"
+            rx="25"
+            ry="4"
+            fill="rgba(255,255,255,0.1)"
+          />
+          <path
+            d="M215 72 Q225 90 220 115"
+            stroke="#FFA025"
+            strokeWidth="2.5"
+            fill="none"
+            strokeLinecap="round"
+          />
           <circle cx="220" cy="117" r="5" fill="#FFA025" />
-          <line x1="215" y1="117" x2="210" y2="132" stroke="#FFA025" strokeWidth="1.5" />
-          <line x1="220" y1="122" x2="218" y2="136" stroke="#FFA025" strokeWidth="1.5" />
-          <line x1="225" y1="117" x2="228" y2="131" stroke="#FFA025" strokeWidth="1.5" />
+          <line
+            x1="215"
+            y1="117"
+            x2="210"
+            y2="132"
+            stroke="#FFA025"
+            strokeWidth="1.5"
+          />
+          <line
+            x1="220"
+            y1="122"
+            x2="218"
+            y2="136"
+            stroke="#FFA025"
+            strokeWidth="1.5"
+          />
+          <line
+            x1="225"
+            y1="117"
+            x2="228"
+            y2="131"
+            stroke="#FFA025"
+            strokeWidth="1.5"
+          />
 
           {/* EYEBROWS */}
-          <path d="M122 178 Q132 170 144 178" stroke="#1C4815" strokeWidth="4.5" fill="none" strokeLinecap="round" />
-          <path d="M176 178 Q188 170 198 178" stroke="#1C4815" strokeWidth="4.5" fill="none" strokeLinecap="round" />
+          <path
+            d="M122 178 Q132 170 144 178"
+            stroke="#1C4815"
+            strokeWidth="4.5"
+            fill="none"
+            strokeLinecap="round"
+          />
+          <path
+            d="M176 178 Q188 170 198 178"
+            stroke="#1C4815"
+            strokeWidth="4.5"
+            fill="none"
+            strokeLinecap="round"
+          />
 
           {/* EYES */}
           <g className="sprout-eye-left">
@@ -258,41 +412,114 @@ export function SproutAvatar({
           </g>
 
           {/* CHEEKS */}
-          <ellipse className={`sprout-cheek${isSpeaking ? " speaking" : ""}`} cx="110" cy="222" rx="22" ry="13" fill="#FFA025" opacity="0.4" />
-          <ellipse className={`sprout-cheek${isSpeaking ? " speaking" : ""}`} cx="210" cy="222" rx="22" ry="13" fill="#FFA025" opacity="0.4" />
+          <ellipse
+            className={`sprout-cheek${isSpeaking ? " speaking" : ""}`}
+            cx="110"
+            cy="222"
+            rx="22"
+            ry="13"
+            fill="#FFA025"
+            opacity="0.4"
+          />
+          <ellipse
+            className={`sprout-cheek${isSpeaking ? " speaking" : ""}`}
+            cx="210"
+            cy="222"
+            rx="22"
+            ry="13"
+            fill="#FFA025"
+            opacity="0.4"
+          />
 
           {/* MOUTH — wider open when speaking */}
           {isSpeaking ? (
             <>
-              <path d="M126 222 Q160 268 194 222" stroke="#1C4815" strokeWidth="5" fill="none" strokeLinecap="round" />
-              <path d="M128 225 Q160 264 192 225 Q160 248 128 225 Z" fill="white" />
+              <path
+                d="M126 222 Q160 268 194 222"
+                stroke="#1C4815"
+                strokeWidth="5"
+                fill="none"
+                strokeLinecap="round"
+              />
+              <path
+                d="M128 225 Q160 264 192 225 Q160 248 128 225 Z"
+                fill="white"
+              />
             </>
           ) : (
             <>
-              <path d="M126 222 Q160 255 194 222" stroke="#1C4815" strokeWidth="5" fill="none" strokeLinecap="round" />
-              <path d="M128 225 Q160 254 192 225 Q160 240 128 225 Z" fill="white" />
+              <path
+                d="M126 222 Q160 255 194 222"
+                stroke="#1C4815"
+                strokeWidth="5"
+                fill="none"
+                strokeLinecap="round"
+              />
+              <path
+                d="M128 225 Q160 254 192 225 Q160 240 128 225 Z"
+                fill="white"
+              />
             </>
           )}
-          <ellipse cx="160" cy="212" rx="5" ry="3.5" fill="rgba(28,72,21,0.3)" />
+          <ellipse
+            cx="160"
+            cy="212"
+            rx="5"
+            ry="3.5"
+            fill="rgba(28,72,21,0.3)"
+          />
 
           {/* STARS */}
           <g className="sprout-star" style={{ transformOrigin: "68px 155px" }}>
-            <polygon points="68,148 70,154 76,154 71,158 73,164 68,160 63,164 65,158 60,154 66,154" fill="#FFA025" opacity="0.9" />
+            <polygon
+              points="68,148 70,154 76,154 71,158 73,164 68,160 63,164 65,158 60,154 66,154"
+              fill="#FFA025"
+              opacity="0.9"
+            />
           </g>
           <g className="sprout-star" style={{ transformOrigin: "252px 140px" }}>
-            <polygon points="252,133 254,139 260,139 255,143 257,149 252,145 247,149 249,143 244,139 250,139" fill="#FFA025" opacity="0.9" />
+            <polygon
+              points="252,133 254,139 260,139 255,143 257,149 252,145 247,149 249,143 244,139 250,139"
+              fill="#FFA025"
+              opacity="0.9"
+            />
           </g>
           <g className="sprout-star" style={{ transformOrigin: "80px 310px" }}>
-            <polygon points="80,305 82,309 86,309 83,312 84,316 80,313 76,316 77,312 74,309 78,309" fill="#ffc46a" opacity="0.75" />
+            <polygon
+              points="80,305 82,309 86,309 83,312 84,316 80,313 76,316 77,312 74,309 78,309"
+              fill="#ffc46a"
+              opacity="0.75"
+            />
           </g>
 
           {/* BOOK */}
           <g transform="translate(55, 230) rotate(-15)">
             <rect x="0" y="0" width="36" height="28" rx="3" fill="#1C4815" />
             <rect x="3" y="0" width="4" height="28" fill="#FFA025" />
-            <rect x="9" y="6" width="22" height="2" rx="1" fill="rgba(255,255,255,0.45)" />
-            <rect x="9" y="11" width="18" height="2" rx="1" fill="rgba(255,255,255,0.35)" />
-            <rect x="9" y="16" width="20" height="2" rx="1" fill="rgba(255,255,255,0.35)" />
+            <rect
+              x="9"
+              y="6"
+              width="22"
+              height="2"
+              rx="1"
+              fill="rgba(255,255,255,0.45)"
+            />
+            <rect
+              x="9"
+              y="11"
+              width="18"
+              height="2"
+              rx="1"
+              fill="rgba(255,255,255,0.35)"
+            />
+            <rect
+              x="9"
+              y="16"
+              width="20"
+              height="2"
+              rx="1"
+              fill="rgba(255,255,255,0.35)"
+            />
           </g>
 
           {/* PENCIL */}
@@ -307,15 +534,63 @@ export function SproutAvatar({
           {/* Listening sound waves */}
           {isListening && (
             <g opacity="0.7">
-              <ellipse cx="160" cy="178" rx="105" ry="108" fill="none" stroke="#34d399" strokeWidth="2" opacity="0.3">
-                <animate attributeName="rx" values="105;118;105" dur="1.2s" repeatCount="indefinite" />
-                <animate attributeName="ry" values="108;121;108" dur="1.2s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.3;0;0.3" dur="1.2s" repeatCount="indefinite" />
+              <ellipse
+                cx="160"
+                cy="178"
+                rx="105"
+                ry="108"
+                fill="none"
+                stroke="#34d399"
+                strokeWidth="2"
+                opacity="0.3"
+              >
+                <animate
+                  attributeName="rx"
+                  values="105;118;105"
+                  dur="1.2s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="ry"
+                  values="108;121;108"
+                  dur="1.2s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.3;0;0.3"
+                  dur="1.2s"
+                  repeatCount="indefinite"
+                />
               </ellipse>
-              <ellipse cx="160" cy="178" rx="110" ry="113" fill="none" stroke="#34d399" strokeWidth="1.5" opacity="0.15">
-                <animate attributeName="rx" values="110;128;110" dur="1.8s" repeatCount="indefinite" />
-                <animate attributeName="ry" values="113;131;113" dur="1.8s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.15;0;0.15" dur="1.8s" repeatCount="indefinite" />
+              <ellipse
+                cx="160"
+                cy="178"
+                rx="110"
+                ry="113"
+                fill="none"
+                stroke="#34d399"
+                strokeWidth="1.5"
+                opacity="0.15"
+              >
+                <animate
+                  attributeName="rx"
+                  values="110;128;110"
+                  dur="1.8s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="ry"
+                  values="113;131;113"
+                  dur="1.8s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.15;0;0.15"
+                  dur="1.8s"
+                  repeatCount="indefinite"
+                />
               </ellipse>
             </g>
           )}

@@ -20,8 +20,10 @@ export type GraphNodeData = {
   branchId: string | null;
   parentId: string | null;
   completed?: boolean;
+  locked?: boolean;
   next?: boolean;
   expanded?: boolean;
+  isRemoving?: boolean;
   onOpenConcept?: (conceptId: string) => void;
   summary?: string;
 };
@@ -30,7 +32,7 @@ export type GraphNode = Node<GraphNodeData, "graph">;
 
 const nodeVariants = cva(
   [
-    "relative w-[340px] overflow-hidden rounded-2xl px-5 py-4",
+    "relative w-[340px] rounded-2xl px-5 py-4",
     "bg-[rgba(17,34,20,0.55)] backdrop-blur-[16px]",
     "border border-[rgba(46,232,74,0.15)]",
     "shadow-[0_8px_32px_rgba(0,0,0,0.3)]",
@@ -63,8 +65,18 @@ const iconMap: Record<
 };
 
 function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
-  const { label, variant, completed, next, expanded, onOpenConcept, summary } =
-    data;
+  const {
+    label,
+    variant,
+    completed,
+    locked,
+    next,
+    expanded,
+    isRemoving,
+    onOpenConcept,
+    summary,
+  } = data;
+  const isLocked = !!locked && !completed;
   const { icon: Icon, className: iconClassName } = iconMap[variant];
 
   return (
@@ -78,11 +90,16 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
         className={cn(
           nodeVariants({ variant }),
           completed && "border-[rgba(46,232,74,0.35)]",
-          next && "animate-[ambient-glow_4s_ease-in-out_infinite] opacity-100",
-          !completed && !next && "opacity-60",
+          !isLocked &&
+            next &&
+            "animate-[ambient-glow_4s_ease-in-out_infinite] opacity-100",
+          !completed && !next && !isLocked && "opacity-60",
+          isLocked && "opacity-35 saturate-50",
           selected &&
             "ring-2 ring-[#2EE84A] ring-offset-2 ring-offset-[#0A1A0F]",
           expanded && "border-[rgba(46,232,74,0.4)] opacity-100",
+          "transition-all duration-300 ease-out",
+          isRemoving && "pointer-events-none -translate-y-2 scale-95 opacity-0",
         )}
       >
         <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.06] to-transparent" />
@@ -99,8 +116,8 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
         {(variant === "concept" || variant === "subconcept") && (
           <div
             className={cn(
-              "overflow-hidden transition-opacity duration-400 ease-out",
-              expanded ? "max-h-[160px] opacity-100 mt-3" : "max-h-0 opacity-0",
+              "overflow-hidden transition-all duration-400 ease-out",
+              expanded ? "max-h-[300px] opacity-100 mt-3" : "max-h-0 opacity-0",
             )}
           >
             <div className="border-t border-[rgba(46,232,74,0.15)] pt-3">
@@ -109,13 +126,23 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
               </p>
               <Button
                 size="sm"
-                className="w-full bg-[#2EE84A]/15 text-[#2EE84A] hover:bg-[#2EE84A]/25 border border-[#2EE84A]/20"
+                disabled={isLocked}
+                className={cn(
+                  "w-full border border-[#2EE84A]/20 bg-[#2EE84A]/15 text-[#2EE84A] hover:bg-[#2EE84A]/25",
+                  isLocked &&
+                    "cursor-not-allowed border-white/10 bg-white/5 text-white/45 hover:bg-white/5",
+                )}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isLocked) return;
                   onOpenConcept?.(id);
                 }}
               >
-                {variant === "concept" ? "Open Subconcepts" : "Open"}
+                {isLocked
+                  ? "Locked"
+                  : variant === "concept"
+                    ? "Open Subconcepts"
+                    : "Open Chat"}
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>

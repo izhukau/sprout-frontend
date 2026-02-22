@@ -1,7 +1,6 @@
 @import "tailwindcss";
-@import "../../node_modules/tw-animate-css/dist/tw-animate.css";
+@import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "../../node_modules/@excalidraw/excalidraw/dist/prod/index.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -161,6 +160,22 @@
       0 8px 32px rgba(0, 0, 0, 0.3);
     transform: scale(1.03);
   }
+}
+
+@keyframes edge-appear {
+  from {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.react-flow__edge-path[data-new] {
+  animation: edge-appear 0.4s ease-out forwards;
+  stroke-dasharray: 100;
 }
 
 @layer base {
