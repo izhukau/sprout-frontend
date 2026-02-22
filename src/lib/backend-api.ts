@@ -1,12 +1,3 @@
-export type BackendUser = {
-  id: string;
-  email: string;
-  title: string | null;
-  desc: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export type BackendBranch = {
   id: string;
   title: string;
@@ -158,21 +149,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
-}
-
-export async function createUser(input: {
-  email: string;
-  title?: string | null;
-  desc?: string | null;
-}): Promise<BackendUser> {
-  return apiFetch<BackendUser>("/api/users", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function getUser(userId: string): Promise<BackendUser> {
-  return apiFetch<BackendUser>(`/api/users/${userId}`);
 }
 
 export async function listBranches(userId: string): Promise<BackendBranch[]> {
