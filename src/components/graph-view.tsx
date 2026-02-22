@@ -12,8 +12,8 @@ import { NewBranchDialog } from "@/components/new-branch-dialog";
 import { ConceptDiagnosticChat } from "@/components/concept-diagnostic-chat";
 import { HandCursor } from "@/components/hand-cursor";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
-import { useAuth } from "@/hooks/use-auth";
 import { useHandTracking } from "@/hooks/use-hand-tracking";
+import { DEFAULT_USER_ID } from "@/lib/constants";
 import {
   type BackendBranch,
   type BackendEdge,
@@ -23,10 +23,8 @@ import {
   type BackendQuestion,
   createBranch,
   createNode,
-  createUser,
   DEFAULT_BRANCH_TITLES,
   deleteBranch,
-  getUser,
   listBranches,
   listDependencyEdges,
   listNodes,
@@ -38,9 +36,7 @@ import {
   getConceptNodesForBranch,
   getSubconceptNodesForConcept,
 } from "@/lib/graph-utils";
-import { getConceptDiagnostic } from "@/lib/backend-api";
-
-const USER_ID_STORAGE_KEY = "sprout_user_id";
+import { getConceptDiagnostic, patchAssessment } from "@/lib/backend-api";
 
 function nodeVariantFromType(type: BackendNode["type"]): NodeVariant {
   return type;
@@ -140,50 +136,12 @@ function applyLockedState(nodes: GraphNode[], edges: Edge[]): GraphNode[] {
   }));
 }
 
-async function resolveFrontendUserId(preferredUserId?: string | null) {
-  if (preferredUserId) {
-    try {
-      await getUser(preferredUserId);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(USER_ID_STORAGE_KEY, preferredUserId);
-      }
-      return preferredUserId;
-    } catch {
-      // Fall through to stored/local creation flow
-    }
-  }
-
-  if (typeof window !== "undefined") {
-    const storedUserId = localStorage.getItem(USER_ID_STORAGE_KEY);
-    if (storedUserId) {
-      try {
-        await getUser(storedUserId);
-        return storedUserId;
-      } catch {
-        localStorage.removeItem(USER_ID_STORAGE_KEY);
-      }
-    }
-  }
-
-  const created = await createUser({
-    email: `demo-${Date.now()}-${Math.floor(Math.random() * 1000)}@sprout.local`,
-    title: "Demo learner",
-  });
-
-  if (typeof window !== "undefined") {
-    localStorage.setItem(USER_ID_STORAGE_KEY, created.id);
-  }
-
-  return created.id;
-}
-
 export function GraphViewContainer() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
-  const userIdFromQuery = searchParams.get("userId");
   const branchIdFromQuery = searchParams.get("branchId");
   const conceptIdFromQuery = searchParams.get("conceptId");
+  const activeUserId = DEFAULT_USER_ID;
 
   const [view, setView] = useState<GraphView>({ level: "global" });
   const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(
@@ -191,7 +149,6 @@ export function GraphViewContainer() {
   );
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [activeUserId, setActiveUserId] = useState<string | null>(null);
   const [pendingDiagnostic, setPendingDiagnostic] = useState<{
     conceptId: string;
     conceptTitle: string;
@@ -199,9 +156,6 @@ export function GraphViewContainer() {
     questions: BackendQuestion[];
     requiredAnswers: number;
   } | null>(null);
-  const [dismissedDiagnosticConcepts, setDismissedDiagnosticConcepts] =
-    useState<Set<string>>(new Set());
-
   const [branches, setBranches] = useState<BackendBranch[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
@@ -235,15 +189,13 @@ export function GraphViewContainer() {
         setPendingDiagnostic(null);
         return;
       }
-      if (!activeUserId) return;
-      if (dismissedDiagnosticConcepts.has(view.conceptId)) return;
       try {
         const result = await getConceptDiagnostic({
           conceptId: view.conceptId,
           userId: activeUserId,
         });
         if (cancelled) return;
-        if (result.answeredCount >= result.requiredAnswers) {
+        if (result.isComplete) {
           setPendingDiagnostic(null);
           return;
         }
@@ -265,7 +217,7 @@ export function GraphViewContainer() {
     return () => {
       cancelled = true;
     };
-  }, [view, activeUserId, dismissedDiagnosticConcepts]);
+  }, [view, activeUserId]);
 
   const completedSetRef = useRef<Set<string>>(new Set());
 
@@ -433,7 +385,6 @@ export function GraphViewContainer() {
 
   const resumeConceptRun = useCallback(
     (conceptId: string) => {
-      if (!activeUserId) return;
       seedKnownNodes(backendNodesRef.current.map((n) => n.id));
       void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
         userId: activeUserId,
@@ -488,27 +439,20 @@ export function GraphViewContainer() {
       setIsLoading(true);
       setError(null);
       try {
-        const userId = await resolveFrontendUserId(
-          userIdFromQuery ?? user?.id ?? null,
-        );
-        if (isCancelled) return;
-
-        setActiveUserId(userId);
-
-        let branchRows = await listBranches(userId);
+        let branchRows = await listBranches(activeUserId);
         if (!branchRows.length) {
           await Promise.all(
             DEFAULT_BRANCH_TITLES.map((title) =>
-              createBranch({ userId, title }),
+              createBranch({ userId: activeUserId, title }),
             ),
           );
-          branchRows = await listBranches(userId);
+          branchRows = await listBranches(activeUserId);
         }
         if (isCancelled) return;
 
         setBranches(branchRows);
 
-        let nodesRows = await refreshGraph(userId);
+        let nodesRows = await refreshGraph(activeUserId);
         const hasRootByBranch = new Set(
           nodesRows
             .filter((node) => node.type === "root" && !!node.branchId)
@@ -522,7 +466,7 @@ export function GraphViewContainer() {
           await Promise.all(
             missingRoots.map((branch) =>
               createNode({
-                userId,
+                userId: activeUserId,
                 type: "root",
                 branchId: branch.id,
                 parentId: null,
@@ -530,7 +474,7 @@ export function GraphViewContainer() {
               }),
             ),
           );
-          nodesRows = await refreshGraph(userId);
+          nodesRows = await refreshGraph(activeUserId);
         }
 
         if (isCancelled) return;
@@ -591,8 +535,7 @@ export function GraphViewContainer() {
       isCancelled = true;
     };
   }, [
-    user?.id,
-    userIdFromQuery,
+    activeUserId,
     branchIdFromQuery,
     conceptIdFromQuery,
     refreshGraph,
@@ -610,8 +553,6 @@ export function GraphViewContainer() {
       setHighlightedBranchId(null);
       setFocusedNodeId(null);
       setExpandedNodeId(null);
-
-      if (!activeUserId) return;
 
       const rootId = branchRootByBranchId[branchId];
       if (!rootId) return;
@@ -647,8 +588,6 @@ export function GraphViewContainer() {
 
       setExpandedNodeId(null);
       setView({ level: "concept", branchId: view.branchId, conceptId });
-
-      if (!activeUserId) return;
 
       seedKnownNodes(backendNodesRef.current.map((n) => n.id));
       void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
@@ -730,13 +669,10 @@ export function GraphViewContainer() {
         const query = new URLSearchParams({ nodeId });
         query.set("branchId", view.branchId);
         query.set("conceptId", view.conceptId);
-        if (activeUserId) {
-          query.set("userId", activeUserId);
-        }
         router.push(`/learn?${query.toString()}`);
       }
     },
-    [view, isNodeLockedInCurrentView, handleOpenConcept, activeUserId, router],
+    [view, isNodeLockedInCurrentView, handleOpenConcept, router],
   );
 
   const handleBack = useCallback(() => {
@@ -752,8 +688,6 @@ export function GraphViewContainer() {
 
   const handleCreateBranch = useCallback(
     async (data: { title: string; description: string; files: File[] }) => {
-      if (!activeUserId) return;
-
       const newBranch = await createBranch({
         userId: activeUserId,
         title: data.title,
@@ -798,8 +732,6 @@ export function GraphViewContainer() {
 
   const handleDeleteBranch = useCallback(
     async (branchId: string) => {
-      if (!activeUserId) return;
-
       const branch = branches.find((item) => item.id === branchId);
       const confirmed = window.confirm(
         `Delete topic "${branch?.title ?? "this topic"}" and its full graph?`,
@@ -1045,7 +977,7 @@ export function GraphViewContainer() {
               : "Enable hand tracking"
           }
           className={[
-            "absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
+            "absolute bottom-44 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
             handTrackingEnabled
               ? "border-green-500/60 bg-green-500/20 text-green-300"
               : "border-white/10 bg-[rgba(10,26,15,0.8)] text-white/40 hover:border-white/20 hover:text-white/70",
@@ -1135,7 +1067,7 @@ export function GraphViewContainer() {
         />
       )}
 
-      {pendingDiagnostic && activeUserId && (
+      {pendingDiagnostic && (
         <ConceptDiagnosticChat
           userId={activeUserId}
           conceptTitle={pendingDiagnostic.conceptTitle}
@@ -1147,11 +1079,10 @@ export function GraphViewContainer() {
             resumeConceptRun(pendingDiagnostic.conceptId);
           }}
           onClose={() => {
+            const assessmentId = pendingDiagnostic.assessment.id;
             setPendingDiagnostic(null);
-            setDismissedDiagnosticConcepts((prev) => {
-              const next = new Set(prev);
-              next.add(pendingDiagnostic.conceptId);
-              return next;
+            void patchAssessment(assessmentId, {
+              completedAt: new Date().toISOString(),
             });
           }}
         />
