@@ -40,10 +40,7 @@ export function ForceGraphView({
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const focusNodeRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const initialFitDone = useRef(false);
-<<<<<<< HEAD
   const smoothHandRef = useRef<{ x: number; y: number } | null>(null);
-  const graphData = useMemo(() => toForceGraphData(nodes), [nodes]);
-=======
   const graphDataRef = useRef<{ nodes: ForceNode[]; links: ForceLink[] }>({
     nodes: [],
     links: [],
@@ -53,7 +50,7 @@ export function ForceGraphView({
     graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
     return graphDataRef.current;
   }, [nodes, dependencyEdges]);
-  // Pin all nodes after 2s so they stay put when the next node arrives
+  // Pin all nodes after 500ms so they stay put when the next node arrives
   useEffect(() => {
     if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
     pinTimerRef.current = setTimeout(() => {
@@ -68,8 +65,6 @@ export function ForceGraphView({
       if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
     };
   }, [graphData.nodes]);
-
->>>>>>> 0e9570ee400cc13d7330ee3c84ed10cdf18e2dbb
   const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
   const branchCenters = useMemo(() => {
     const centers = new Map<string, { x: number; y: number }>();
