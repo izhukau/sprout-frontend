@@ -7,10 +7,12 @@ import {
   MiniMap,
   type Node,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import "@xyflow/react/dist/style.css";
 import { type GraphNode, graphNodeTypes } from "@/components/graph-node";
 import { buildEdgesFromNodes } from "@/lib/graph-utils";
@@ -54,7 +56,15 @@ type GraphCanvasProps = {
   onPaneClick?: () => void;
 };
 
-export default function GraphCanvas({
+export default function GraphCanvas(props: GraphCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <GraphCanvasInner {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function GraphCanvasInner({
   nodes: inputNodes,
   edges: inputEdges,
   onNodeClick,
@@ -62,6 +72,7 @@ export default function GraphCanvas({
   onOpenConcept,
   onPaneClick,
 }: GraphCanvasProps) {
+  const { fitView } = useReactFlow();
   const { layoutedNodes, layoutedEdges } = useMemo(() => {
     const initialEdges = inputEdges ?? buildEdgesFromNodes(inputNodes);
     const nodeById = new Map(inputNodes.map((node) => [node.id, node]));
@@ -175,6 +186,15 @@ export default function GraphCanvas({
     setEdges(layoutedEdges);
   }, [layoutedEdges, setEdges]);
 
+  const initialFitDone = useRef(false);
+
+  const handleInit = useCallback(() => {
+    if (!initialFitDone.current) {
+      initialFitDone.current = true;
+      fitView(FIT_VIEW_OPTIONS);
+    }
+  }, [fitView]);
+
   const handleNodeClick = (_event: React.MouseEvent, node: Node) => {
     if ((node.data as { locked?: boolean } | undefined)?.locked) return;
     onNodeClick?.(node.id);
@@ -191,8 +211,7 @@ export default function GraphCanvas({
         onPaneClick={onPaneClick}
         nodeTypes={graphNodeTypes}
         colorMode="dark"
-        fitView
-        fitViewOptions={FIT_VIEW_OPTIONS}
+        onInit={handleInit}
       >
         <Background color="rgba(46, 232, 74, 0.08)" gap={24} size={1.5} />
         <Controls
