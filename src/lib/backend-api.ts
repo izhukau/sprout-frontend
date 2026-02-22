@@ -81,6 +81,39 @@ export type BackendChatMessage = {
   createdAt: string;
 };
 
+export type BackendAssessment = {
+  id: string;
+  targetNodeId: string | null;
+  type: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type BackendQuestion = {
+  id: string;
+  assessmentId: string;
+  nodeId: string | null;
+  format: "mcq" | "open_ended";
+  prompt: string;
+  options: string[] | null;
+  correctAnswer: string | null;
+  difficulty: number;
+};
+
+export type BackendAnswer = {
+  id: string;
+  userId: string;
+  assessmentId: string;
+  questionId: string;
+  answerText: string | null;
+  selectedOption: string | null;
+  isCorrect: boolean | null;
+  score: number | null;
+  feedback: string | null;
+  createdAt: string;
+};
+
 export const DEFAULT_BRANCH_TITLES = [
   "Data Structures & Algorithms",
   "Systems",
@@ -289,6 +322,35 @@ export async function sendTutorMessage(
       body: JSON.stringify(input),
     },
   );
+}
+
+export async function listAssessmentAnswers(
+  assessmentId: string,
+  userId?: string,
+): Promise<BackendAnswer[]> {
+  const query = new URLSearchParams();
+  if (userId) query.set("userId", userId);
+  return apiFetch<BackendAnswer[]>(
+    `/api/assessments/${assessmentId}/answers?${query.toString()}`,
+  );
+}
+
+export async function submitAssessmentAnswer(
+  assessmentId: string,
+  input: {
+    userId: string;
+    questionId: string;
+    answerText?: string | null;
+    selectedOption?: string | null;
+    isCorrect?: boolean | null;
+    score?: number | null;
+    feedback?: string | null;
+  },
+): Promise<BackendAnswer> {
+  return apiFetch<BackendAnswer>(`/api/assessments/${assessmentId}/answers`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function getActiveNodeContent(
