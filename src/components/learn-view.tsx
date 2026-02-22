@@ -428,6 +428,21 @@ export function LearnView() {
             </span>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                const miroIdx = CARDS.findIndex((c) => c.type === "miro-summary");
+                setActiveIndex(miroIdx !== -1 ? miroIdx : CARDS.length - 1);
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold transition-all hover:opacity-70"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.4)",
+              }}
+            >
+              dev: skip to end
+            </button>
             <span
               className="text-sm font-medium"
               style={{ color: "rgba(255,255,255,0.4)" }}
