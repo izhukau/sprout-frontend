@@ -23,6 +23,7 @@ export type GraphNodeData = {
   locked?: boolean;
   next?: boolean;
   expanded?: boolean;
+  isRemoving?: boolean;
   onOpenConcept?: (conceptId: string) => void;
   summary?: string;
 };
@@ -71,6 +72,7 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
     locked,
     next,
     expanded,
+    isRemoving,
     onOpenConcept,
     summary,
   } = data;
@@ -96,6 +98,8 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
           selected &&
             "ring-2 ring-[#2EE84A] ring-offset-2 ring-offset-[#0A1A0F]",
           expanded && "border-[rgba(46,232,74,0.4)] opacity-100",
+          "transition-all duration-300 ease-out",
+          isRemoving && "pointer-events-none -translate-y-2 scale-95 opacity-0",
         )}
       >
         <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.06] to-transparent" />

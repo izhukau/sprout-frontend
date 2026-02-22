@@ -2,12 +2,14 @@
 
 import type { Edge } from "@xyflow/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentActivityCard } from "@/components/agent-activity-card";
 import { ForceGraphView } from "@/components/force-graph-view";
 import GraphCanvas from "@/components/graph-canvas";
 import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
+import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
 import { useAuth } from "@/hooks/use-auth";
 import {
   type BackendBranch,
@@ -19,13 +21,12 @@ import {
   createUser,
   DEFAULT_BRANCH_TITLES,
   deleteBranch,
-  generateSubconcepts,
   getUser,
   listBranches,
   listDependencyEdges,
   listNodes,
   listProgress,
-  runTopicAgent,
+  SSE_BASE_URL,
   uploadDocuments,
 } from "@/lib/backend-api";
 import {
@@ -200,6 +201,14 @@ export function GraphViewContainer() {
   const [error, setError] = useState<string | null>(null);
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
 
+  // Ref mirror for use inside SSE mutation handler (avoids stale closures)
+  const backendNodesRef = useRef<BackendNode[]>([]);
+  useEffect(() => {
+    backendNodesRef.current = backendNodes;
+  }, [backendNodes]);
+
+  const completedSetRef = useRef<Set<string>>(new Set());
+
   const branchRootByBranchId = useMemo(() => {
     const map: Record<string, string> = {};
     for (const node of backendNodes) {
@@ -210,12 +219,172 @@ export function GraphViewContainer() {
     return map;
   }, [backendNodes]);
 
+  // --- SSE stream mutation handler ---
+  const handleStreamMutation = useCallback((mutation: StreamMutation) => {
+    switch (mutation.kind) {
+      case "node_created": {
+        const node = mutation.node;
+        // Sync ref immediately so subsequent edge_created (flushed from
+        // the SSE buffer in the same microtask) can find this node.
+        if (!backendNodesRef.current.some((n) => n.id === node.id)) {
+          backendNodesRef.current = [...backendNodesRef.current, node];
+        }
+        setBackendNodes((prev) => {
+          if (prev.some((n) => n.id === node.id)) return prev;
+          return [...prev, node];
+        });
+        setGraphNodes((prev) => {
+          if (prev.some((n) => n.id === node.id)) return prev;
+          const graphNode = mapBackendNodesToGraphNodes(
+            [node],
+            completedSetRef.current,
+          )[0];
+          return [...prev, graphNode];
+        });
+        break;
+      }
+
+      case "edge_created": {
+        const { sourceNodeId, targetNodeId } = mutation.edge;
+        const nodes = backendNodesRef.current;
+        const sourceNode = nodes.find((n) => n.id === sourceNodeId);
+        const targetNode = nodes.find((n) => n.id === targetNodeId);
+
+        if (sourceNode && targetNode) {
+          const edgeRow: BackendEdge = {
+            id: `sse-${sourceNodeId}-${targetNodeId}`,
+            sourceNodeId,
+            targetNodeId,
+            createdAt: new Date().toISOString(),
+          };
+
+          // Classify: concept-to-concept → conceptEdgesByRootId
+          if (
+            sourceNode.type === "concept" &&
+            targetNode.type === "concept" &&
+            sourceNode.parentId
+          ) {
+            const rootId = sourceNode.parentId;
+            setConceptEdgesByRootId((prev) => {
+              const existing = prev[rootId] ?? [];
+              if (
+                existing.some(
+                  (e) =>
+                    e.sourceNodeId === sourceNodeId &&
+                    e.targetNodeId === targetNodeId,
+                )
+              )
+                return prev;
+              return { ...prev, [rootId]: [...existing, edgeRow] };
+            });
+          }
+          // Classify: subconcept edges → subconceptEdgesByConceptId
+          else if (
+            targetNode.type === "subconcept" ||
+            sourceNode.type === "subconcept"
+          ) {
+            const conceptId =
+              sourceNode.type === "subconcept"
+                ? sourceNode.parentId
+                : sourceNode.id;
+            if (conceptId) {
+              setSubconceptEdgesByConceptId((prev) => {
+                const existing = prev[conceptId] ?? [];
+                if (
+                  existing.some(
+                    (e) =>
+                      e.sourceNodeId === sourceNodeId &&
+                      e.targetNodeId === targetNodeId,
+                  )
+                )
+                  return prev;
+                return { ...prev, [conceptId]: [...existing, edgeRow] };
+              });
+            }
+          }
+        }
+        break;
+      }
+
+      case "node_removed": {
+        // Sync ref immediately (mirrors node_created symmetry)
+        backendNodesRef.current = backendNodesRef.current.filter(
+          (n) => n.id !== mutation.nodeId,
+        );
+        // Mark as removing for animation, then remove after delay
+        setGraphNodes((prev) =>
+          prev.map((n) =>
+            n.id === mutation.nodeId
+              ? { ...n, data: { ...n.data, isRemoving: true } }
+              : n,
+          ),
+        );
+        setTimeout(() => {
+          setBackendNodes((prev) =>
+            prev.filter((n) => n.id !== mutation.nodeId),
+          );
+          setGraphNodes((prev) => prev.filter((n) => n.id !== mutation.nodeId));
+        }, 400);
+        break;
+      }
+
+      case "edge_removed": {
+        const { sourceNodeId, targetNodeId } = mutation;
+        const filterEdge = (e: BackendEdge) =>
+          !(e.sourceNodeId === sourceNodeId && e.targetNodeId === targetNodeId);
+        setConceptEdgesByRootId((prev) => {
+          const updated: Record<string, BackendEdge[]> = {};
+          for (const key of Object.keys(prev)) {
+            updated[key] = prev[key].filter(filterEdge);
+          }
+          return updated;
+        });
+        setSubconceptEdgesByConceptId((prev) => {
+          const updated: Record<string, BackendEdge[]> = {};
+          for (const key of Object.keys(prev)) {
+            updated[key] = prev[key].filter(filterEdge);
+          }
+          return updated;
+        });
+        break;
+      }
+
+      case "json_response": {
+        const data = mutation.data as Record<string, unknown>;
+        if (data.status === "awaiting_answers") {
+          // Diagnostic questions need to be answered first.
+          // Store for future diagnostic UI integration.
+          console.info(
+            "[GraphView] Concept awaiting diagnostic answers:",
+            data,
+          );
+        } else if (data.status === "not_ready") {
+          setError(
+            "Diagnostic questions are still being generated. Please wait a moment and try again.",
+          );
+        }
+        break;
+      }
+    }
+  }, []);
+
+  const {
+    startStream,
+    cancelStream,
+    seedKnownNodes,
+    isStreaming,
+    error: streamError,
+    activityLog,
+    clearActivityLog,
+  } = useAgentStream({ onMutation: handleStreamMutation });
+
   const refreshGraph = useCallback(async (userId: string) => {
     const [nodesRows, progressRows] = await Promise.all([
       listNodes({ userId }),
       listProgress(userId),
     ]);
     const completedSet = buildCompletedSet(progressRows);
+    completedSetRef.current = completedSet;
     setBackendNodes(nodesRows);
     setGraphNodes(mapBackendNodesToGraphNodes(nodesRows, completedSet));
     return nodesRows;
@@ -371,7 +540,7 @@ export function GraphViewContainer() {
   }, []);
 
   const handleOpenBranch = useCallback(
-    async (branchId: string) => {
+    (branchId: string) => {
       setView({ level: "branch", branchId });
       setHighlightedBranchId(null);
       setFocusedNodeId(null);
@@ -382,23 +551,13 @@ export function GraphViewContainer() {
       const rootId = branchRootByBranchId[branchId];
       if (!rootId) return;
 
-      setIsSyncing(true);
-      try {
-        await runTopicAgent(rootId, activeUserId);
-        const nodesRows = await refreshGraph(activeUserId);
-        await loadConceptEdgesForBranch(branchId, nodesRows);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to open branch");
-      } finally {
-        setIsSyncing(false);
-      }
+      seedKnownNodes(backendNodesRef.current.map((n) => n.id));
+      void startStream(`${SSE_BASE_URL}/api/agents/topics/${rootId}/run`, {
+        userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
+      });
     },
-    [
-      activeUserId,
-      branchRootByBranchId,
-      refreshGraph,
-      loadConceptEdgesForBranch,
-    ],
+    [activeUserId, branchRootByBranchId, seedKnownNodes, startStream],
   );
 
   const handleSelectConcept = useCallback((_conceptId: string) => {
@@ -426,16 +585,11 @@ export function GraphViewContainer() {
 
       if (!activeUserId) return;
 
-      setIsSyncing(true);
-      try {
-        await generateSubconcepts(conceptId, activeUserId);
-        await refreshGraph(activeUserId);
-        await loadSubconceptEdgesForConcept(conceptId);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to open concept");
-      } finally {
-        setIsSyncing(false);
-      }
+      seedKnownNodes(backendNodesRef.current.map((n) => n.id));
+      void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
+        userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
+      });
     },
     [
       view,
@@ -443,8 +597,8 @@ export function GraphViewContainer() {
       branchRootByBranchId,
       conceptEdgesByRootId,
       activeUserId,
-      refreshGraph,
-      loadSubconceptEdgesForConcept,
+      seedKnownNodes,
+      startStream,
     ],
   );
 
@@ -521,6 +675,7 @@ export function GraphViewContainer() {
   );
 
   const handleBack = useCallback(() => {
+    cancelStream();
     setExpandedNodeId(null);
     setFocusedNodeId(null);
     if (view.level === "concept") {
@@ -528,7 +683,7 @@ export function GraphViewContainer() {
     } else if (view.level === "branch") {
       setView({ level: "global" });
     }
-  }, [view]);
+  }, [view, cancelStream]);
 
   const handleCreateBranch = useCallback(
     async (data: { title: string; description: string; files: File[] }) => {
@@ -552,13 +707,28 @@ export function GraphViewContainer() {
         await uploadDocuments(rootNode.id, data.files);
       }
 
-      await runTopicAgent(rootNode.id, activeUserId);
-
       setBranches((prev) => [...prev, newBranch]);
-      const nodesRows = await refreshGraph(activeUserId);
-      await loadConceptEdgesForBranch(newBranch.id, nodesRows);
+      // Add root node to state immediately
+      setBackendNodes((prev) => [...prev, rootNode]);
+      setGraphNodes((prev) => [
+        ...prev,
+        ...mapBackendNodesToGraphNodes([rootNode], completedSetRef.current),
+      ]);
+
+      // Auto-focus the new branch so the user sees it grow in isolation
+      setHighlightedBranchId(newBranch.id);
+
+      // Start SSE stream for topic agent (fire-and-forget; progress shown in activity card)
+      seedKnownNodes([
+        ...backendNodesRef.current.map((n) => n.id),
+        rootNode.id,
+      ]);
+      void startStream(`${SSE_BASE_URL}/api/agents/topics/${rootNode.id}/run`, {
+        userId: activeUserId,
+        ...(process.env.NEXT_PUBLIC_SMALL_AGENTS === "true" && { small: true }),
+      });
     },
-    [activeUserId, refreshGraph, loadConceptEdgesForBranch],
+    [activeUserId, seedKnownNodes, startStream],
   );
 
   const handleDeleteBranch = useCallback(
@@ -748,6 +918,12 @@ export function GraphViewContainer() {
     subconceptEdgesByConceptId,
   ]);
 
+  const allDependencyEdges = useMemo(() => {
+    const conceptEdges = Object.values(conceptEdgesByRootId).flat();
+    const subconceptEdges = Object.values(subconceptEdgesByConceptId).flat();
+    return [...conceptEdges, ...subconceptEdges];
+  }, [conceptEdgesByRootId, subconceptEdgesByConceptId]);
+
   if (isLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[#0A1A0F] text-sm text-[#3DBF5A]/80">
@@ -774,9 +950,9 @@ export function GraphViewContainer() {
       />
 
       <div className="absolute inset-0 left-72">
-        {error && (
+        {(error || streamError) && (
           <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-            {error}
+            {error || streamError}
           </div>
         )}
         {isSyncing && (
@@ -789,6 +965,7 @@ export function GraphViewContainer() {
           <ForceGraphView
             branches={branches}
             nodes={graphNodes}
+            dependencyEdges={allDependencyEdges}
             highlightedBranchId={highlightedBranchId}
             focusedNodeId={focusedNodeId}
             onNodeClick={handleForceNodeClick}
@@ -816,6 +993,15 @@ export function GraphViewContainer() {
         onOpenChange={setIsNewBranchOpen}
         onSubmit={handleCreateBranch}
       />
+
+      {(activityLog.length > 0 || isStreaming) && (
+        <AgentActivityCard
+          activityLog={activityLog}
+          isStreaming={isStreaming}
+          error={streamError}
+          onDismiss={clearActivityLog}
+        />
+      )}
     </div>
   );
 }
