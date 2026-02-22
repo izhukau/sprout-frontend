@@ -217,7 +217,7 @@ export function GraphViewContainer() {
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
   const isSmallAgents = process.env.NEXT_PUBLIC_SMALL_AGENTS === "true";
   const [handTrackingEnabled, setHandTrackingEnabled] = useState(false);
-  const { handPos, connected: handConnected } = useHandTracking(
+  const { handPos, hands, connected: handConnected } = useHandTracking(
     "ws://localhost:8765",
     handTrackingEnabled,
   );
@@ -1086,6 +1086,7 @@ export function GraphViewContainer() {
               focusedNodeId={focusedNodeId}
               onNodeClick={handleForceNodeClick}
               handPos={handPos}
+              hands={hands}
             />
             {highlightedBranchId && (
               <button
