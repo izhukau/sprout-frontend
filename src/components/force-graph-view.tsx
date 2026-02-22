@@ -5,8 +5,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { GraphNode } from "@/components/graph-node";
-import type { BackendBranch } from "@/lib/backend-api";
-import type { ForceNode } from "@/lib/graph-utils";
+import type { BackendBranch, BackendEdge } from "@/lib/backend-api";
+import type { ForceLink, ForceNode } from "@/lib/graph-utils";
 import { buildBranchColorMap, toForceGraphData } from "@/lib/graph-utils";
 
 const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), {
@@ -18,6 +18,7 @@ const ROOT_COLOR = "#ffffff";
 type ForceGraphViewProps = {
   branches: BackendBranch[];
   nodes: GraphNode[];
+  dependencyEdges: BackendEdge[];
   highlightedBranchId: string | null;
   focusedNodeId: string | null;
   onNodeClick: (nodeId: string) => void;
@@ -26,6 +27,7 @@ type ForceGraphViewProps = {
 export function ForceGraphView({
   branches,
   nodes,
+  dependencyEdges,
   highlightedBranchId,
   focusedNodeId,
   onNodeClick,
@@ -36,7 +38,14 @@ export function ForceGraphView({
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const focusNodeRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const initialFitDone = useRef(false);
-  const graphData = useMemo(() => toForceGraphData(nodes), [nodes]);
+  const graphDataRef = useRef<{ nodes: ForceNode[]; links: ForceLink[] }>({
+    nodes: [],
+    links: [],
+  });
+  const graphData = useMemo(() => {
+    graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
+    return graphDataRef.current;
+  }, [nodes, dependencyEdges]);
   const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
   const branchCenters = useMemo(() => {
     const centers = new Map<string, { x: number; y: number }>();
@@ -67,7 +76,7 @@ export function ForceGraphView({
     return () => ro.disconnect();
   }, []);
 
-  // Apply branch clustering forces whenever graph topology changes.
+  // Configure branch clustering forces (only when branch layout changes).
   useEffect(() => {
     const fg = graphRef.current;
     if (!fg) return;
@@ -94,8 +103,7 @@ export function ForceGraphView({
     fg.d3Force("link")?.distance(40);
 
     fg.d3ReheatSimulation();
-    initialFitDone.current = false;
-  }, [graphData, branchCenters]);
+  }, [branchCenters]);
 
   // Zoom to highlighted branch, centering on the clicked node
   useEffect(() => {
@@ -105,7 +113,7 @@ export function ForceGraphView({
     const focus = focusNodeRef.current;
     if (focus) {
       fg.cameraPosition(
-        { x: focus.x, y: focus.y, z: focus.z + 150 },
+        { x: focus.x, y: focus.y, z: focus.z + 400 },
         { x: focus.x, y: focus.y, z: focus.z },
         600,
       );
@@ -128,7 +136,7 @@ export function ForceGraphView({
       branchNodes.reduce((sum, n) => sum + (n.z ?? 0), 0) / branchNodes.length;
 
     fg.cameraPosition(
-      { x: cx, y: cy, z: cz + 150 },
+      { x: cx, y: cy, z: cz + 400 },
       { x: cx, y: cy, z: cz },
       600,
     );
@@ -202,9 +210,17 @@ export function ForceGraphView({
     (node: any) => {
       const { variant, completed, branchId } = node as ForceNode;
       const isHighlighted =
-        !highlightedBranchId ||
-        branchId === highlightedBranchId ||
-        variant === "root";
+        !highlightedBranchId || branchId === highlightedBranchId;
+
+      // Fully hide nodes from other branches
+      if (!isHighlighted) {
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0, 0, 0),
+          new THREE.MeshBasicMaterial(),
+        );
+        mesh.visible = false;
+        return mesh;
+      }
 
       const radius = variant === "root" ? 3 : variant === "concept" ? 2 : 1;
       const nodeBranchColors = branchId ? branchColors.get(branchId) : null;
@@ -212,7 +228,7 @@ export function ForceGraphView({
         variant === "root"
           ? ROOT_COLOR
           : (nodeBranchColors?.[variant] ?? ROOT_COLOR);
-      const opacity = isHighlighted ? (completed ? 1 : 0.6) : 0.15;
+      const opacity = completed ? 1 : 0.6;
 
       const isFocused = node.id === focusedNodeId;
       const geometry = new THREE.SphereGeometry(radius, 16, 16);
@@ -270,15 +286,11 @@ export function ForceGraphView({
 
       if (!sourceNode || !targetNode) return "rgba(255, 255, 255, 0.02)";
 
-      const sourceInBranch =
-        sourceNode.branchId === highlightedBranchId ||
-        sourceNode.variant === "root";
-      const targetInBranch =
-        targetNode.branchId === highlightedBranchId ||
-        targetNode.variant === "root";
+      const sourceInBranch = sourceNode.branchId === highlightedBranchId;
+      const targetInBranch = targetNode.branchId === highlightedBranchId;
 
       if (sourceInBranch && targetInBranch) return "rgba(255, 255, 255, 0.15)";
-      return "rgba(255, 255, 255, 0.02)";
+      return "rgba(0, 0, 0, 0)";
     },
     [highlightedBranchId],
   );
@@ -307,7 +319,8 @@ export function ForceGraphView({
         linkColor={linkColor}
         linkWidth={1}
         linkOpacity={0.6}
-        cooldownTicks={200}
+        cooldownTicks={100}
+        d3AlphaDecay={0.08}
         enableNodeDrag={true}
       />
     </div>
