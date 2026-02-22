@@ -4,6 +4,7 @@ import { forceX, forceY } from "d3-force";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import type { HandSample } from "@/hooks/use-hand-tracking";
 import type { GraphNode } from "@/components/graph-node";
 import type { BackendBranch, BackendEdge } from "@/lib/backend-api";
 import type { ForceLink, ForceNode } from "@/lib/graph-utils";
@@ -23,6 +24,7 @@ type ForceGraphViewProps = {
   focusedNodeId: string | null;
   onNodeClick: (nodeId: string) => void;
   handPos?: { x: number; y: number; z: number; pinch: number } | null;
+  hands?: HandSample[];
 };
 
 export function ForceGraphView({
@@ -33,6 +35,7 @@ export function ForceGraphView({
   focusedNodeId,
   onNodeClick,
   handPos,
+  hands,
 }: ForceGraphViewProps) {
   // biome-ignore lint/suspicious/noExplicitAny: react-force-graph ref type is untyped
   const graphRef = useRef<any>(null);
@@ -52,10 +55,34 @@ export function ForceGraphView({
   });
   const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pinnedNodeIds = useRef(new Set<string>());
+  const handsRef = useRef<HandSample[] | null>(null);
+  const grabStateRef = useRef<{
+    active: boolean;
+    handedness: string | null;
+    branchId: string | null;
+    nodeIds: string[];
+    initialPalm: { x: number; y: number; z: number };
+    initialPositions: Map<string, { x: number; y: number; z: number }>;
+  }>({
+    active: false,
+    handedness: null,
+    branchId: null,
+    nodeIds: [],
+    initialPalm: { x: 0.5, y: 0.5, z: 0 },
+    initialPositions: new Map(),
+  });
+  // Smoothed drag offset so node movement isn't jittery
+  const smoothGrabOffsetRef = useRef({ x: 0, y: 0, z: 0 });
+  const DRAG_SMOOTH_ALPHA = 0.06;
+  const MAX_CAPTURE_RADIUS_PX = 140;
   const graphData = useMemo(() => {
     graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
     return graphDataRef.current;
   }, [nodes, dependencyEdges]);
+
+  useEffect(() => {
+    handsRef.current = hands ?? null;
+  }, [hands]);
   // Pin nodes after settling — preserve existing pins so only new nodes float
   useEffect(() => {
     if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
@@ -227,13 +254,203 @@ export function ForceGraphView({
     const animate = () => {
       rafRef.current = requestAnimationFrame(animate);
 
-      const target = targetHandRef.current;
-      if (!target) return;
-
       const fg = graphRef.current;
       if (!fg) return;
 
       const center = orbitCenterRef.current;
+      const handsSnapshot = handsRef.current ?? [];
+      const grabState = grabStateRef.current;
+
+      // Only one grab active at a time. When a grab is already active, only
+      // the hand that started it is acknowledged; a second open palm is ignored.
+      const allGrabbingHands = handsSnapshot.filter((h) => h.is_grabbing);
+      const grabHand = grabState.active
+        ? (allGrabbingHands.find((h) => h.handedness === grabState.handedness) ?? null)
+        : (allGrabbingHands[0] ?? null);
+
+      const nodesWithCoords = graphDataRef.current
+        .nodes as (ForceNode & {
+        x?: number;
+        y?: number;
+        z?: number;
+        fx?: number;
+        fy?: number;
+        fz?: number;
+      })[];
+
+      // BFS over links to collect only subconcept node IDs reachable from this concept.
+      // Only subconcepts are moved with the main node; other concepts/roots are never included.
+      const collectSubconceptIds = (conceptNodeId: string): string[] => {
+        const found = new Set<string>();
+        const queue = [conceptNodeId];
+        const nodesById = new Map(
+          graphDataRef.current.nodes.map((n) => [n.id, n as ForceNode]),
+        );
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          for (const link of graphDataRef.current.links) {
+            const src =
+              typeof link.source === "object" && link.source !== null
+                ? ((link.source as Record<string, unknown>).id as string | undefined) ?? ""
+                : (link.source as string);
+            const tgt =
+              typeof link.target === "object" && link.target !== null
+                ? ((link.target as Record<string, unknown>).id as string | undefined) ?? ""
+                : (link.target as string);
+            if (src !== cur || !tgt || found.has(tgt)) continue;
+            const node = nodesById.get(tgt);
+            if (node?.variant !== "subconcept") continue;
+            found.add(tgt);
+            queue.push(tgt);
+          }
+        }
+        return Array.from(found);
+      };
+
+      // Start a new grab when a hand first enters grabbing state
+      if (grabHand && !grabState.active) {
+        const palm = {
+          x: grabHand.palm_x,
+          y: grabHand.palm_y,
+          z: grabHand.palm_z,
+        };
+
+        // Grabbable nodes: root (white topic) and concept (large coloured) nodes only
+        const mainNodes = nodesWithCoords.filter(
+          (n) => n.variant === "root" || n.variant === "concept",
+        );
+
+        if (mainNodes.length > 0) {
+          // Convert palm's normalised position to screen pixels, then project
+          // each candidate node to screen space and pick the nearest one.
+          // This is camera-aware (zoom, rotation, pan) — far more accurate than
+          // any world-space approximation.
+          const containerEl = containerRef.current;
+          const screenW = containerEl?.clientWidth ?? 1280;
+          const screenH = containerEl?.clientHeight ?? 800;
+          const palmScreenX = palm.x * screenW;
+          const palmScreenY = palm.y * screenH;
+
+          let bestNode = mainNodes[0];
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (const node of mainNodes) {
+            const sp = fg.graph2ScreenCoords(
+              node.x ?? 0,
+              node.y ?? 0,
+              node.z ?? 0,
+            );
+            const dx = sp.x - palmScreenX;
+            const dy = sp.y - palmScreenY;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) {
+              bestDist = d2;
+              bestNode = node;
+            }
+          }
+
+          // Only capture if palm is actually over a main node (single closest one)
+          const maxCaptureD2 = MAX_CAPTURE_RADIUS_PX * MAX_CAPTURE_RADIUS_PX;
+          if (bestDist > maxCaptureD2) {
+            // Palm not near any main node — don't start grab
+          } else {
+            // Root/topic: only that node. Concept: that node + only its subconcepts (never other concepts/roots).
+            const idsToMove: string[] =
+              bestNode.variant === "root"
+                ? [bestNode.id]
+                : [bestNode.id, ...collectSubconceptIds(bestNode.id)];
+
+            const initialPositions = new Map<
+              string,
+              { x: number; y: number; z: number }
+            >();
+            for (const node of nodesWithCoords) {
+              if (!idsToMove.includes(node.id)) continue;
+              initialPositions.set(node.id, {
+                x: node.x ?? 0,
+                y: node.y ?? 0,
+                z: node.z ?? 0,
+              });
+            }
+
+            grabStateRef.current = {
+              active: true,
+              handedness: grabHand.handedness,
+              branchId: bestNode.branchId ?? null,
+              nodeIds: idsToMove,
+              initialPalm: palm,
+              initialPositions,
+            };
+
+            // Wake the force engine so it starts applying the new fixed positions
+            if (typeof fg.d3ReheatSimulation === "function") {
+              fg.d3ReheatSimulation();
+            }
+            smoothGrabOffsetRef.current = { x: 0, y: 0, z: 0 };
+          }
+        }
+      } else if (!grabHand && grabState.active) {
+        // Grabbing hand released — freeze nodes in place and clear grab state
+        grabStateRef.current = {
+          active: false,
+          handedness: null,
+          branchId: null,
+          nodeIds: [],
+          initialPalm: grabState.initialPalm,
+          initialPositions: new Map(),
+        };
+      } else if (grabHand && grabState.active) {
+        // Continue dragging: palm delta → world offset, then smooth and apply
+        const palm = {
+          x: grabHand.palm_x,
+          y: grabHand.palm_y,
+          z: grabHand.palm_z,
+        };
+
+        const dxNorm = palm.x - grabState.initialPalm.x;
+        const dyNorm = palm.y - grabState.initialPalm.y;
+        const dzNorm = palm.z - grabState.initialPalm.z;
+
+        const scaleXY = 800;
+        const scaleZ = -1200;
+
+        const dxWorld = dxNorm * scaleXY;
+        const dyWorld = -dyNorm * scaleXY;
+        const dzWorld = dzNorm * scaleZ;
+
+        const smooth = smoothGrabOffsetRef.current;
+        smoothGrabOffsetRef.current = {
+          x: smooth.x + (dxWorld - smooth.x) * DRAG_SMOOTH_ALPHA,
+          y: smooth.y + (dyWorld - smooth.y) * DRAG_SMOOTH_ALPHA,
+          z: smooth.z + (dzWorld - smooth.z) * DRAG_SMOOTH_ALPHA,
+        };
+        const dx = smoothGrabOffsetRef.current.x;
+        const dy = smoothGrabOffsetRef.current.y;
+        const dz = smoothGrabOffsetRef.current.z;
+
+        for (const node of nodesWithCoords) {
+          if (!grabState.nodeIds.includes(node.id)) continue;
+          const base = grabState.initialPositions.get(node.id);
+          if (!base) continue;
+
+          node.fx = base.x + dx;
+          node.fy = base.y + dy;
+          node.fz = base.z + dz;
+
+          (node as { x: number; y: number; z: number }).x = node.fx;
+          (node as { x: number; y: number; z: number }).y = node.fy;
+          (node as { x: number; y: number; z: number }).z = node.fz;
+        }
+
+        if (typeof fg.d3ReheatSimulation === "function") {
+          fg.d3ReheatSimulation();
+        }
+      }
+
+      // Camera orbit — only when a non-grabbing hand is providing a target.
+      // If all hands are grabbing (or no hand is present), camera stays frozen
+      // so the drag motion isn't fought by simultaneous orbit movement.
+      const target = targetHandRef.current;
+      if (!target) return;
 
       // Lerp smoothed x/y toward target each frame
       if (!smoothHandRef.current) {
@@ -424,7 +641,7 @@ export function ForceGraphView({
     return <div ref={containerRef} className="h-full w-full" />;
 
   return (
-    <div ref={containerRef} className="h-full w-full">
+    <div ref={containerRef} className="relative h-full w-full">
       <ForceGraph3D
         ref={graphRef}
         graphData={graphData}
@@ -448,6 +665,59 @@ export function ForceGraphView({
         d3AlphaDecay={0.08}
         enableNodeDrag={true}
       />
+      {/* Palm-grab progress indicators — one ring per hand in open-palm or grabbing state */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {(hands ?? [])
+          .filter((h) => h.is_open_palm || h.is_grabbing)
+          .map((h) => {
+            const cx = h.palm_x * 100;
+            const cy = h.palm_y * 100;
+            const progress = Math.min(h.palm_hold_duration / 3.0, 1);
+            const r = 22;
+            const circ = 2 * Math.PI * r;
+            const dashOffset = circ * (1 - progress);
+            const color = h.is_grabbing ? "#4ade80" : "#facc15";
+            return (
+              <svg
+                key={h.hand}
+                className="absolute overflow-visible"
+                style={{
+                  left: `${cx}%`,
+                  top: `${cy}%`,
+                  transform: "translate(-50%, -50%)",
+                }}
+                width={60}
+                height={60}
+                viewBox="-30 -30 60 60"
+              >
+                {/* Faint track ring */}
+                <circle
+                  cx={0}
+                  cy={0}
+                  r={r}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.12)"
+                  strokeWidth={3}
+                />
+                {/* Progress arc — fills clockwise from 12 o'clock */}
+                <circle
+                  cx={0}
+                  cy={0}
+                  r={r}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={dashOffset}
+                  transform="rotate(-90)"
+                />
+                {/* Centre dot */}
+                <circle cx={0} cy={0} r={5} fill={color} />
+              </svg>
+            );
+          })}
+      </div>
     </div>
   );
 }
