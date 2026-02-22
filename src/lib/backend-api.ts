@@ -150,6 +150,12 @@ export async function createBranch(input: {
   });
 }
 
+export async function deleteBranch(branchId: string): Promise<void> {
+  return apiFetch<void>(`/api/branches/${branchId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listNodes(filters: {
   userId?: string;
   type?: "root" | "concept" | "subconcept";
@@ -293,7 +299,11 @@ export async function listChatMessages(
 
 export async function sendTutorMessage(
   sessionId: string,
-  input: { userId: string; content: string },
+  input: {
+    userId: string;
+    content: string;
+    drawingImageDataUrl?: string;
+  },
 ): Promise<{ message: string; isComplete: boolean }> {
   return apiFetch<{ message: string; isComplete: boolean }>(
     `/api/chat/sessions/${sessionId}/tutor`,

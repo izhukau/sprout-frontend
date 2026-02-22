@@ -18,6 +18,7 @@ import {
   createNode,
   createUser,
   DEFAULT_BRANCH_TITLES,
+  deleteBranch,
   generateSubconcepts,
   getUser,
   listBranches,
@@ -560,6 +561,74 @@ export function GraphViewContainer() {
     [activeUserId, refreshGraph, loadConceptEdgesForBranch],
   );
 
+  const handleDeleteBranch = useCallback(
+    async (branchId: string) => {
+      if (!activeUserId) return;
+
+      const branch = branches.find((item) => item.id === branchId);
+      const confirmed = window.confirm(
+        `Delete topic "${branch?.title ?? "this topic"}" and its full graph?`,
+      );
+      if (!confirmed) return;
+
+      setIsSyncing(true);
+      setError(null);
+      try {
+        await deleteBranch(branchId);
+
+        const [branchRows, nodesRows] = await Promise.all([
+          listBranches(activeUserId),
+          refreshGraph(activeUserId),
+        ]);
+        setBranches(branchRows);
+
+        const rootNodeIds = new Set(
+          nodesRows
+            .filter((node) => node.type === "root")
+            .map((node) => node.id),
+        );
+        setConceptEdgesByRootId((prev) => {
+          const next: Record<string, BackendEdge[]> = {};
+          for (const [rootId, edges] of Object.entries(prev)) {
+            if (rootNodeIds.has(rootId)) {
+              next[rootId] = edges;
+            }
+          }
+          return next;
+        });
+
+        const conceptNodeIds = new Set(
+          nodesRows
+            .filter((node) => node.type === "concept")
+            .map((node) => node.id),
+        );
+        setSubconceptEdgesByConceptId((prev) => {
+          const next: Record<string, BackendEdge[]> = {};
+          for (const [conceptId, edges] of Object.entries(prev)) {
+            if (conceptNodeIds.has(conceptId)) {
+              next[conceptId] = edges;
+            }
+          }
+          return next;
+        });
+
+        if (highlightedBranchId === branchId) {
+          setHighlightedBranchId(null);
+        }
+        if (view.level !== "global" && view.branchId === branchId) {
+          setView({ level: "global" });
+        }
+        setFocusedNodeId(null);
+        setExpandedNodeId(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to delete topic");
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [activeUserId, branches, highlightedBranchId, refreshGraph, view],
+  );
+
   const handleForceNodeClick = useCallback(
     (nodeId: string) => {
       const node = graphNodes.find((candidate) => candidate.id === nodeId);
@@ -699,6 +768,7 @@ export function GraphViewContainer() {
         onSelectConcept={handleSelectConcept}
         onOpenConcept={(conceptId) => void handleOpenConcept(conceptId)}
         onSelectSubconcept={handleOpenNode}
+        onDeleteBranch={(branchId) => void handleDeleteBranch(branchId)}
         onBack={handleBack}
         onNewBranch={() => setIsNewBranchOpen(true)}
       />
