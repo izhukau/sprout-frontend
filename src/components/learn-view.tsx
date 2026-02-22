@@ -572,6 +572,28 @@ export function LearnView() {
                         setMiroEmbedUrls((p) => ({ ...p, [card.id]: url }))
                       }
                       onContinue={handleContinue}
+                      chatMessages={messages}
+                      quizResults={CARDS.filter(
+                        (c): c is QuizCard =>
+                          c.type === "quiz" && quizSubmitted.has(c.id),
+                      ).map((c) => ({
+                        cardTitle: c.title,
+                        question: c.question,
+                        selectedAnswer:
+                          quizSelected[c.id] !== undefined
+                            ? c.options[quizSelected[c.id]]
+                            : "No answer",
+                        correctAnswer: c.options[c.correctIndex],
+                        isCorrect: quizSelected[c.id] === c.correctIndex,
+                      }))}
+                      textResponses={CARDS.filter(
+                        (c): c is TextCard =>
+                          c.type === "text" && textSubmitted.has(c.id),
+                      ).map((c) => ({
+                        cardTitle: c.title,
+                        prompt: c.prompt,
+                        response: textValues[c.id] ?? "",
+                      }))}
                     />
                   )}
                 </div>
@@ -2120,6 +2142,9 @@ function MiroSummaryCardUI({
   embedUrl,
   onEmbedUrl,
   onContinue,
+  chatMessages = [],
+  quizResults = [],
+  textResponses = [],
 }: {
   card: MiroSummaryCard;
   cardNumber: number;
@@ -2128,6 +2153,19 @@ function MiroSummaryCardUI({
   embedUrl: string | null;
   onEmbedUrl: (url: string) => void;
   onContinue: () => void;
+  chatMessages?: ChatMessage[];
+  quizResults?: Array<{
+    cardTitle: string;
+    question: string;
+    selectedAnswer: string;
+    correctAnswer: string;
+    isCorrect: boolean;
+  }>;
+  textResponses?: Array<{
+    cardTitle: string;
+    prompt: string;
+    response: string;
+  }>;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2142,8 +2180,15 @@ function MiroSummaryCardUI({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          topicTitle: card.title,
+          topicTitle: card.topic,
           keyPoints: card.keyPoints,
+          chatMessages: chatMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            linkedCardTitle: m.linkedCardTitle,
+          })),
+          quizResults,
+          textResponses,
         }),
       });
       if (res.status === 401) {
@@ -2185,7 +2230,7 @@ function MiroSummaryCardUI({
         you can rearrange, annotate, and share.
       </p>
 
-      {/* Key points preview */}
+      {/* Preview of board sections */}
       {!embedUrl && (
         <div
           className="mb-6 rounded-xl p-5"
@@ -2198,22 +2243,37 @@ function MiroSummaryCardUI({
             className="mb-3 text-xs font-bold uppercase tracking-widest"
             style={{ color: "#ffa025" }}
           >
-            Will include
+            Board sections
           </div>
-          <div className="flex flex-wrap gap-2">
-            {card.keyPoints.map((kp) => (
-              <span
-                key={kp}
-                className="rounded-full px-3 py-1 text-xs font-medium"
-                style={{
-                  background: "rgba(255,160,37,0.1)",
-                  border: "1px solid rgba(255,160,37,0.22)",
-                  color: "rgba(255,255,255,0.7)",
-                }}
-              >
-                {kp}
-              </span>
-            ))}
+          <div className="flex flex-col gap-2.5">
+            <div className="flex items-center gap-2.5 text-sm" style={{ color: "rgba(255,255,255,0.72)" }}>
+              <span>📚</span>
+              <span>Key Concepts — {card.keyPoints.length} points</span>
+            </div>
+            {chatMessages.filter((m) => m.role === "user").length > 0 && (
+              <div className="flex items-center gap-2.5 text-sm" style={{ color: "rgba(255,255,255,0.72)" }}>
+                <span>💬</span>
+                <span>
+                  Your Questions &amp; AI Answers —{" "}
+                  {chatMessages.filter((m) => m.role === "user").length} Q&amp;A pairs
+                </span>
+              </div>
+            )}
+            {quizResults.length > 0 && (
+              <div className="flex items-center gap-2.5 text-sm" style={{ color: "rgba(255,255,255,0.72)" }}>
+                <span>✅</span>
+                <span>
+                  Quiz Results —{" "}
+                  {quizResults.filter((q) => q.isCorrect).length}/{quizResults.length} correct
+                </span>
+              </div>
+            )}
+            {textResponses.length > 0 && (
+              <div className="flex items-center gap-2.5 text-sm" style={{ color: "rgba(255,255,255,0.72)" }}>
+                <span>✍️</span>
+                <span>Written Reflections — {textResponses.length} response{textResponses.length !== 1 ? "s" : ""}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
