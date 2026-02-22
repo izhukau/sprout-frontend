@@ -7,6 +7,7 @@ import {
   Globe,
   Layers,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ export type GraphNodeData = {
   locked?: boolean;
   next?: boolean;
   expanded?: boolean;
+  isRemoving?: boolean;
   onOpenConcept?: (conceptId: string) => void;
   summary?: string;
 };
@@ -71,6 +73,7 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
     locked,
     next,
     expanded,
+    isRemoving,
     onOpenConcept,
     summary,
   } = data;
@@ -84,7 +87,14 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
         position={Position.Top}
         className="!bg-[#3DBF5A] !border-[#0A1A0F] !h-2 !w-2"
       />
-      <div
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85, y: 10 }}
+        animate={
+          isRemoving
+            ? { opacity: 0, scale: 0.6, y: -10 }
+            : { opacity: 1, scale: 1, y: 0 }
+        }
+        transition={{ duration: 0.35, ease: "easeOut" }}
         className={cn(
           nodeVariants({ variant }),
           completed && "border-[rgba(46,232,74,0.35)]",
@@ -144,7 +154,7 @@ function GraphNodeComponent({ data, id, selected }: NodeProps<GraphNode>) {
             </div>
           </div>
         )}
-      </div>
+      </motion.div>
 
       <Handle
         type="source"
