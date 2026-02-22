@@ -42,10 +42,27 @@ export function ForceGraphView({
     nodes: [],
     links: [],
   });
+  const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graphData = useMemo(() => {
     graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
     return graphDataRef.current;
   }, [nodes, dependencyEdges]);
+  // Pin all nodes after 2s so they stay put when the next node arrives
+  useEffect(() => {
+    if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+    pinTimerRef.current = setTimeout(() => {
+      for (const n of graphData.nodes) {
+        const node = n as ForceNode & { x?: number; y?: number; z?: number; fx?: number; fy?: number; fz?: number };
+        if (node.x != null) node.fx = node.x;
+        if (node.y != null) node.fy = node.y;
+        if (node.z != null) node.fz = node.z;
+      }
+    }, 500);
+    return () => {
+      if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+    };
+  }, [graphData.nodes]);
+
   const branchColors = useMemo(() => buildBranchColorMap(branches), [branches]);
   const branchCenters = useMemo(() => {
     const centers = new Map<string, { x: number; y: number }>();
