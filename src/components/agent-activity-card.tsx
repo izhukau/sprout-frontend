@@ -203,8 +203,8 @@ export function AgentActivityCard({
       )}
 
       {/* Activity list */}
-      <ScrollArea className="max-h-64">
-        <div ref={scrollRef} className="space-y-1 px-4 py-3">
+      <div ref={scrollRef} className="max-h-64 overflow-y-auto">
+        <div className="space-y-1 px-4 py-3">
           {activityLog.length === 0 && (
             <p className="text-xs text-white/40">Waiting for events...</p>
           )}
@@ -215,13 +215,13 @@ export function AgentActivityCard({
                 key={entry.id}
                 className="flex items-start gap-2 text-xs leading-relaxed text-white/70"
               >
-                <span className="mt-0.5">{icon}</span>
+                <span className="mt-0.5 shrink-0">{icon}</span>
                 <span className="min-w-0 break-words">{text}</span>
               </div>
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

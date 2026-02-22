@@ -949,7 +949,16 @@ export function GraphViewContainer() {
         onNewBranch={() => setIsNewBranchOpen(true)}
       />
 
-      <div className="absolute inset-0 left-72">
+      <div
+        className="absolute inset-0 left-72"
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && highlightedBranchId) {
+            setHighlightedBranchId(null);
+          }
+        }}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: need focus for key events
+        tabIndex={0}
+      >
         {(error || streamError) && (
           <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {error || streamError}
@@ -962,14 +971,29 @@ export function GraphViewContainer() {
         )}
 
         {view.level === "global" && (
-          <ForceGraphView
-            branches={branches}
-            nodes={graphNodes}
-            dependencyEdges={allDependencyEdges}
-            highlightedBranchId={highlightedBranchId}
-            focusedNodeId={focusedNodeId}
-            onNodeClick={handleForceNodeClick}
-          />
+          <>
+            <ForceGraphView
+              branches={branches}
+              nodes={graphNodes}
+              dependencyEdges={allDependencyEdges}
+              highlightedBranchId={highlightedBranchId}
+              focusedNodeId={focusedNodeId}
+              onNodeClick={handleForceNodeClick}
+            />
+            {highlightedBranchId && (
+              <button
+                type="button"
+                onClick={() => setHighlightedBranchId(null)}
+                className="absolute left-4 top-4 z-20 flex items-center gap-2 rounded-lg border border-[rgba(46,232,74,0.25)] bg-[rgba(10,26,15,0.85)] px-3 py-2 text-xs text-[#2EE84A] backdrop-blur-sm transition-colors hover:bg-[rgba(46,232,74,0.15)]"
+              >
+                <span>&#x2190;</span>
+                <span>All branches</span>
+                <kbd className="ml-1 rounded border border-[rgba(46,232,74,0.2)] px-1 text-[10px] text-[#2EE84A]/60">
+                  Esc
+                </kbd>
+              </button>
+            )}
+          </>
         )}
         {(view.level === "branch" || view.level === "concept") && (
           <GraphCanvas
