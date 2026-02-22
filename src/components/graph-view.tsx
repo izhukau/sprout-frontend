@@ -9,6 +9,7 @@ import GraphCanvas from "@/components/graph-canvas";
 import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
+import { ConceptDiagnosticChat } from "@/components/concept-diagnostic-chat";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -16,6 +17,8 @@ import {
   type BackendEdge,
   type BackendNode,
   type BackendProgress,
+  type BackendAssessment,
+  type BackendQuestion,
   createBranch,
   createNode,
   createUser,
@@ -186,6 +189,13 @@ export function GraphViewContainer() {
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
+  const [pendingDiagnostic, setPendingDiagnostic] = useState<{
+    conceptId: string;
+    conceptTitle: string;
+    assessment: BackendAssessment;
+    questions: BackendQuestion[];
+    requiredAnswers: number;
+  } | null>(null);
 
   const [branches, setBranches] = useState<BackendBranch[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
@@ -200,6 +210,7 @@ export function GraphViewContainer() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
+  const isSmallAgents = process.env.NEXT_PUBLIC_SMALL_AGENTS === "true";
 
   // Ref mirror for use inside SSE mutation handler (avoids stale closures)
   const backendNodesRef = useRef<BackendNode[]>([]);
@@ -352,12 +363,20 @@ export function GraphViewContainer() {
       case "json_response": {
         const data = mutation.data as Record<string, unknown>;
         if (data.status === "awaiting_answers") {
-          // Diagnostic questions need to be answered first.
-          // Store for future diagnostic UI integration.
-          console.info(
-            "[GraphView] Concept awaiting diagnostic answers:",
-            data,
-          );
+          const conceptId = data.conceptNodeId as string;
+          const conceptTitle =
+            backendNodesRef.current.find((n) => n.id === conceptId)?.title ??
+            "Concept";
+          setPendingDiagnostic({
+            conceptId,
+            conceptTitle,
+            assessment: data.assessment as BackendAssessment,
+            questions: (data.questions as BackendQuestion[]) ?? [],
+            requiredAnswers:
+              (data.requiredAnswers as number | undefined) ??
+              (data.questions as BackendQuestion[])?.length ??
+              10,
+          });
         } else if (data.status === "not_ready") {
           setError(
             "Diagnostic questions are still being generated. Please wait a moment and try again.",
@@ -377,6 +396,18 @@ export function GraphViewContainer() {
     activityLog,
     clearActivityLog,
   } = useAgentStream({ onMutation: handleStreamMutation });
+
+  const resumeConceptRun = useCallback(
+    (conceptId: string) => {
+      if (!activeUserId) return;
+      seedKnownNodes(backendNodesRef.current.map((n) => n.id));
+      void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
+        userId: activeUserId,
+        ...(isSmallAgents && { small: true }),
+      });
+    },
+    [activeUserId, seedKnownNodes, startStream, isSmallAgents],
+  );
 
   const refreshGraph = useCallback(async (userId: string) => {
     const [nodesRows, progressRows] = await Promise.all([
@@ -1000,6 +1031,21 @@ export function GraphViewContainer() {
           isStreaming={isStreaming}
           error={streamError}
           onDismiss={clearActivityLog}
+        />
+      )}
+
+      {pendingDiagnostic && activeUserId && (
+        <ConceptDiagnosticChat
+          userId={activeUserId}
+          conceptTitle={pendingDiagnostic.conceptTitle}
+          assessment={pendingDiagnostic.assessment}
+          questions={pendingDiagnostic.questions}
+          requiredAnswers={pendingDiagnostic.requiredAnswers}
+          onComplete={() => {
+            setPendingDiagnostic(null);
+            resumeConceptRun(pendingDiagnostic.conceptId);
+          }}
+          onClose={() => setPendingDiagnostic(null)}
         />
       )}
     </div>
