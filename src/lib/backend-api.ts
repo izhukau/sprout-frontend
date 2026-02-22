@@ -87,7 +87,7 @@ export const DEFAULT_BRANCH_TITLES = [
   "Discrete Math",
 ];
 
-const API_PREFIX =
+export const API_PREFIX =
   process.env.NEXT_PUBLIC_BACKEND_PROXY_PREFIX ?? "/backend-api";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -186,37 +186,6 @@ export async function listProgress(userId: string): Promise<BackendProgress[]> {
   return apiFetch<BackendProgress[]>(
     `/api/progress?${new URLSearchParams({ userId }).toString()}`,
   );
-}
-
-export async function runTopicAgent(
-  topicNodeId: string,
-  userId: string,
-): Promise<{
-  agent: "topic";
-  topicNodeId: string;
-  generatedConcepts: boolean;
-  rationale: string | null;
-  concepts: BackendNode[];
-  edges: { source: string; target: string }[];
-}> {
-  return apiFetch(`/api/agents/topics/${topicNodeId}/run`, {
-    method: "POST",
-    body: JSON.stringify({ userId }),
-  });
-}
-
-export async function generateSubconcepts(
-  conceptNodeId: string,
-  userId: string,
-): Promise<{
-  generated: boolean;
-  subconcepts: BackendNode[];
-  edges: { source: string; target: string }[];
-}> {
-  return apiFetch(`/api/nodes/${conceptNodeId}/generate-subconcepts`, {
-    method: "POST",
-    body: JSON.stringify({ userId }),
-  });
 }
 
 export async function uploadDocuments(
