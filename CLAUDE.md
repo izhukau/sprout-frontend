@@ -1,173 +1,31 @@
-s\specthin\miniconda3\lib\site-packages (from python-dateutil>=2.7->matplotlib->mediapipe) (1.17.0)
-PS D:\.projects\hackeurope\hackeurope_backend> pip install websockets==12.0 --no-cache-dir --default-timeout=100 
-Collecting websockets==12.0
-  Downloading websockets-12.0-py3-none-any.whl.metadata (6.6 kB)
-Downloading websockets-12.0-py3-none-any.whl (118 kB)
-Installing collected packages: websockets
-Successfully installed websockets-12.0
-PS D:\.projects\hackeurope\hackeurope_backend> python backend.py                                                
-WebSocket Server started on ws://localhost:8765
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
-Next.js Frontend Connected!
-connection handler failed
-Traceback (most recent call last):
-  File "C:\Users\Specthin\miniconda3\Lib\site-packages\websockets\legacy\server.py", line 236, in handler
-    await self.ws_handler(self)
-  File "D:\.projects\hackeurope\hackeurope_backend\backend.py", line 9, in track_hands
-    mp_hands = mp.solutions.hands
-               ^^^^^^^^^^^^
-AttributeError: module 'mediapipe' has no attribute 'solutions'
+# Sprout - AI-Powered Adaptive Learning Platform
 
+## Project Overview
+Sprout is a hackathon project (single user, no auth). It builds personalised learning pathways on any topic using seven Claude-powered agents that autonomously generate 3D knowledge graphs, diagnostic assessments, and interactive tutoring.
 
+## Inspiration
+Getting stuck on homework used to mean trawling through textbooks or finding a teacher on their lunch break. That struggle produced real learning. When AI arrived, any solution became one chat away — and learning suffered. Oxford University Press found 80% of students rely on AI for schoolwork and 62% say it's making them worse at learning. AI tools are here to stay; the question is how students use them. Sprout is a personal AI tutor focused on building understanding, not just giving answers.
 
+## What it does
+Describe a topic, upload notes, and watch Sprout's multi-agent system autonomously generate a 3D learning network that adapts to you. Explore your knowledge graph using natural hand movements via OpenCV hand tracking. Dive into concept nodes to learn through quiz, code, text, and drawing-based blocks. An integrated chat and voice tutor (ElevenLabs) guides learners to reach answers themselves.
 
-LAST TIME THIS CODE WORKED PERFECTLY, USE ITS TECHNIQUES:
+## Architecture
+- **Frontend**: Next.js 16 + React, Three.js/React Flow for graph rendering, OpenCV hand tracking via WebSocket
+- **Backend**: Express 5 + TypeScript, Drizzle ORM + SQLite, Anthropic SDK for Claude agents
+- **Single user**: Hardcoded DEFAULT_USER_ID (`00000000-0000-0000-0000-000000000000`), auto-seeded on backend startup
+- **Backend lives at**: `../sprout-backend`
 
+## Agents (all in `sprout-backend/src/agents/`)
+1. **Topic Agent** — Breaks topics into 6-10 concepts with prerequisite edges
+2. **Subconcept Bootstrap Agent** — Generates 8-12 subconcepts + diagnostic questions per concept
+3. **Concept Refinement Agent** — Personalises subconcept graph based on diagnostic performance
+4. **Tutor Chat Agent** — Teaches subconcepts chunk-by-chunk with exercises
+5. **Grade Answers Agent** — Grades diagnostic answers with scores and feedback
+6. **Generate Diagnostic Agent** — Creates MCQ + open-ended diagnostic questions
+7. **Review Learning Path Agent** — Post-completion enrichment and remediation
 
-import cv2
-import numpy as np
-import mediapipe as mp
-import math
-
-# Initialize MediaPipe Legacy API
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
-mp_draw = mp.solutions.drawing_utils
-
-cap = cv2.VideoCapture(0)
-canvas = None
-prev_x, prev_y = 0, 0
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    frame = cv2.flip(frame, 1)
-
-    if canvas is None:
-        canvas = np.zeros_like(frame)
-
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    result = hands.process(rgb_frame)
-
-    if result.multi_hand_landmarks:
-        for hand_landmarks in result.multi_hand_landmarks:
-            h, w, c = frame.shape
-            
-            # 1. Get coordinates for Thumb (4), Index (8), and Middle Finger (12)
-            thumb_x = int(hand_landmarks.landmark[4].x * w)
-            thumb_y = int(hand_landmarks.landmark[4].y * h)
-            
-            index_x = int(hand_landmarks.landmark[8].x * w)
-            index_y = int(hand_landmarks.landmark[8].y * h)
-            
-            middle_x = int(hand_landmarks.landmark[12].x * w)
-            middle_y = int(hand_landmarks.landmark[12].y * h)
-
-            # 2. Calculate distances for both gestures
-            draw_distance = math.hypot(index_x - thumb_x, index_y - thumb_y)
-            erase_distance = math.hypot(middle_x - thumb_x, middle_y - thumb_y)
-
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-            
-            # Draw hover indicators
-            cv2.circle(frame, (index_x, index_y), 8, (0, 255, 0), -1)   # Green for draw hover
-            cv2.circle(frame, (middle_x, middle_y), 8, (0, 0, 255), -1) # Red for erase hover
-
-            # 3. Gesture Logic
-            if draw_distance < 40:
-                # DRAWING MODE (Blue line)
-                if prev_x == 0 and prev_y == 0:
-                    prev_x, prev_y = index_x, index_y
-                
-                cv2.line(canvas, (prev_x, prev_y), (index_x, index_y), (255, 0, 0), 5)
-                prev_x, prev_y = index_x, index_y
-                
-            elif erase_distance < 40:
-                # ERASING MODE (Thick Black line)
-                if prev_x == 0 and prev_y == 0:
-                    prev_x, prev_y = middle_x, middle_y
-                
-                # Draw black on the canvas to "erase"
-                cv2.line(canvas, (prev_x, prev_y), (middle_x, middle_y), (0, 0, 0), 50)
-                
-                # Draw a white circle on the video feed to show the size of the eraser
-                cv2.circle(frame, (middle_x, middle_y), 25, (255, 255, 255), 2)
-                prev_x, prev_y = middle_x, middle_y
-                
-            else:
-                # HOVERING MODE
-                prev_x, prev_y = 0, 0
-    else:
-        prev_x, prev_y = 0, 0
-
-    # 4. Blending Logic (Unchanged)
-    gray_canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
-    _, inv_mask = cv2.threshold(gray_canvas, 1, 255, cv2.THRESH_BINARY_INV)
-    frame_bg = cv2.bitwise_and(frame, frame, mask=inv_mask)
-    combined = cv2.bitwise_or(frame_bg, canvas)
-
-    cv2.imshow("Virtual Air Canvas", combined)
-
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('c'):
-        canvas = np.zeros_like(frame)
-    if key == 27:
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+## Key patterns
+- Agents use tool-calling loops (agent-loop.ts) with Claude, persisting via tools (not return values)
+- Real-time SSE streaming for graph mutations (node_created, edge_created, etc.)
+- DAG-based learning graphs (not linear sequences)
+- Chunk-based tutoring with text/code/draw question types
