@@ -250,6 +250,7 @@ export function ForceGraphView({
           const spriteMaterial = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
+            depthWrite: false,
           });
           const sprite = new THREE.Sprite(spriteMaterial);
           sprite.scale.set(canvas.width / 16, 4, 1);
