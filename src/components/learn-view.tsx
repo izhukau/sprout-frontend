@@ -1,5 +1,4 @@
 "use client";
-
 import {
   ArrowLeft,
   BookOpen,
@@ -14,8 +13,11 @@ import {
   Loader2,
   Lock,
   Mic,
+  MicOff,
   PenLine,
+  PhoneOff,
   Play,
+  Radio,
   Send,
   Sparkles,
   Square,
@@ -34,6 +36,7 @@ import {
 import { createPortal } from "react-dom";
 import { ExcalidrawBoard } from "@/components/excalidraw-board";
 import { MarkdownLite } from "@/components/markdown-lite";
+import { SproutAvatar } from "@/components/sprout-avatar";
 import { useAuth } from "@/hooks/use-auth";
 import {
   type BackendChatMessage,
@@ -137,8 +140,23 @@ type ChatMessage = {
   linkedCardId: string | null;
   linkedCardTitle: string | null;
   channel?: "answer" | "clarification";
+  answerKind?: AnswerMode;
   isComplete?: boolean;
 };
+
+type BackendTimelineItem =
+  | {
+      kind: "ai";
+      chunk: {
+        id: string;
+        index: number;
+        explanation: string;
+        question: string | null;
+        questionType: AnswerMode | null;
+      };
+      answers: ChatMessage[];
+    }
+  | { kind: "user"; message: ChatMessage };
 
 // ── Dummy data ─────────────────────────────────────────────────────────────────
 
@@ -331,9 +349,26 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 ];
 
 function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
+  const parseAnswerModeToken = (raw: string): AnswerMode | null => {
+    const normalized = raw.trim().toLowerCase();
+    if (
+      normalized === "text" ||
+      normalized === "code" ||
+      normalized === "draw" ||
+      normalized === "mcp"
+    ) {
+      return normalized;
+    }
+    return null;
+  };
+
   const parseTaggedUserMessage = (
     raw: string,
-  ): { content: string; channel: "answer" | "clarification" } => {
+  ): {
+    content: string;
+    channel: "answer" | "clarification";
+    answerKind?: AnswerMode;
+  } => {
     const trimmed = raw.trim();
     if (trimmed.startsWith("[CLARIFICATION]")) {
       return {
@@ -342,8 +377,23 @@ function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
       };
     }
     if (trimmed.startsWith("[ANSWER]")) {
+      const withoutTag = trimmed.replace(/^\[ANSWER\]\s*/i, "").trim();
+      const lines = withoutTag.split(/\r?\n/);
+      if (lines.length > 0) {
+        const match = lines[0].match(/^\s*mode\s*:\s*(.+)\s*$/i);
+        if (match?.[1]) {
+          const parsedKind = parseAnswerModeToken(match[1]);
+          if (parsedKind) {
+            return {
+              content: lines.slice(1).join("\n").trim(),
+              channel: "answer",
+              answerKind: parsedKind,
+            };
+          }
+        }
+      }
       return {
-        content: trimmed.replace(/^\[ANSWER\]\s*/i, ""),
+        content: withoutTag,
         channel: "answer",
       };
     }
@@ -375,6 +425,7 @@ function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
         linkedCardId: null,
         linkedCardTitle: null,
         channel: parsed.channel,
+        answerKind: parsed.answerKind,
       };
     });
 }
@@ -382,10 +433,11 @@ function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
 function splitTutorChunk(content: string): {
   explanation: string;
   question: string | null;
+  questionType: AnswerMode | null;
 } {
   const normalized = content.replaceAll("\r\n", "\n").trim();
   if (!normalized) {
-    return { explanation: "", question: null };
+    return { explanation: "", question: null, questionType: null };
   }
 
   const rawLines = normalized.split("\n");
@@ -442,6 +494,54 @@ function splitTutorChunk(content: string): {
       toMarkerComparable(line),
     );
 
+  const parseQuestionTypeToken = (raw: string): AnswerMode | null => {
+    const normalizedToken = raw
+      .replace(/[*_`~]/g, "")
+      .trim()
+      .toLowerCase();
+
+    if (
+      normalizedToken === "text" ||
+      normalizedToken === "code" ||
+      normalizedToken === "draw" ||
+      normalizedToken === "mcp"
+    ) {
+      return normalizedToken;
+    }
+
+    return null;
+  };
+
+  const extractQuestionType = (line: string): AnswerMode | null => {
+    const stripped = stripQuestionLinePrefix(line);
+    const colonIndex = stripped.indexOf(":");
+    if (colonIndex === -1) return null;
+
+    const marker = stripped
+      .slice(0, colonIndex)
+      .replace(/[*_`~]/g, "")
+      .trim()
+      .toLowerCase();
+    if (
+      marker !== "question type" &&
+      marker !== "question-type" &&
+      marker !== "mode"
+    ) {
+      return null;
+    }
+
+    return parseQuestionTypeToken(stripped.slice(colonIndex + 1));
+  };
+
+  const questionType =
+    rawLines.map((line) => extractQuestionType(line)).find(Boolean) ?? null;
+
+  const explanationWithoutQuestionType = (lines: string[]) =>
+    lines
+      .filter((line) => !extractQuestionType(line))
+      .join("\n")
+      .trim();
+
   for (let i = 0; i < rawLines.length; i++) {
     if (!isQuestionMarkerOnly(rawLines[i])) continue;
 
@@ -450,6 +550,7 @@ function splitTutorChunk(content: string): {
       if (isQuestionMarkerOnly(rawLines[j]) || hasInlineQuestion(rawLines[j])) {
         break;
       }
+      if (extractQuestionType(rawLines[j])) continue;
       const normalizedLine = normalizeQuestionLine(rawLines[j]);
       if (normalizedLine) questionParts.push(normalizedLine);
     }
@@ -457,8 +558,9 @@ function splitTutorChunk(content: string): {
 
     if (questionText) {
       return {
-        explanation: rawLines.slice(0, i).join("\n").trim(),
+        explanation: explanationWithoutQuestionType(rawLines.slice(0, i)),
         question: questionText,
+        questionType,
       };
     }
   }
@@ -467,29 +569,132 @@ function splitTutorChunk(content: string): {
     const questionText = extractInlineQuestion(rawLines[i]);
     if (questionText) {
       return {
-        explanation: rawLines.slice(0, i).join("\n").trim(),
+        explanation: explanationWithoutQuestionType(rawLines.slice(0, i)),
         question: questionText,
+        questionType,
       };
     }
   }
 
   for (let i = rawLines.length - 1; i >= 0; i--) {
+    if (extractQuestionType(rawLines[i])) continue;
     const candidate = normalizeQuestionLine(rawLines[i]);
     if (candidate.endsWith("?")) {
       return {
-        explanation: rawLines.slice(0, i).join("\n").trim(),
+        explanation: explanationWithoutQuestionType(rawLines.slice(0, i)),
         question: candidate,
+        questionType,
       };
     }
   }
 
   return {
-    explanation: normalized,
+    explanation: explanationWithoutQuestionType(rawLines),
     question: null,
+    questionType,
   };
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
+
+type AnswerMode = "text" | "code" | "draw" | "mcp";
+
+const ANSWER_MODE_META: Record<
+  AnswerMode,
+  {
+    label: string;
+    helper: string;
+    placeholder: string;
+    Icon: (props: { className?: string }) => ReturnType<typeof FileText>;
+  }
+> = {
+  text: {
+    label: "Text",
+    helper: "Explain in plain language.",
+    placeholder: "Type your answer...",
+    Icon: FileText,
+  },
+  code: {
+    label: "Code",
+    helper: "Write runnable code or pseudocode.",
+    placeholder: "Write code answer...",
+    Icon: Code2,
+  },
+  draw: {
+    label: "Draw",
+    helper: "Sketch and optionally add a short note.",
+    placeholder: "Describe your drawing...",
+    Icon: PenLine,
+  },
+  mcp: {
+    label: "MCP",
+    helper: "Select option(s) and explain briefly.",
+    placeholder: "Select option(s) and explain briefly...",
+    Icon: Layers,
+  },
+};
+
+type VoiceConversation = {
+  status: "disconnected" | "connecting" | "connected";
+  isSpeaking: boolean;
+  startSession: () => Promise<void>;
+  endSession: () => Promise<void>;
+  sendContextualUpdate: (text: string) => void;
+};
+
+function useVoiceConversation(): VoiceConversation {
+  const [status, setStatus] = useState<
+    "disconnected" | "connecting" | "connected"
+  >("disconnected");
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  const startSession = useCallback(async () => {
+    if (status === "connecting" || status === "connected") return;
+    setStatus("connecting");
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.mediaDevices) {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+      setStatus("connected");
+    } catch (error) {
+      setStatus("disconnected");
+      throw error;
+    }
+  }, [status]);
+
+  const endSession = useCallback(async () => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    utteranceRef.current = null;
+    setIsSpeaking(false);
+    setStatus("disconnected");
+  }, []);
+
+  const sendContextualUpdate = useCallback(
+    (text: string) => {
+      if (status !== "connected") return;
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      utteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+    },
+    [status],
+  );
+
+  return { status, isSpeaking, startSession, endSession, sendContextualUpdate };
+}
 
 export function LearnView() {
   const router = useRouter();
@@ -520,6 +725,14 @@ export function LearnView() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [clarifyInput, setClarifyInput] = useState("");
   const [answerInput, setAnswerInput] = useState("");
+  const [codeAnswerInput, setCodeAnswerInput] = useState("");
+  const [drawAnswerInput, setDrawAnswerInput] = useState("");
+  const [mcpAnswerInput, setMcpAnswerInput] = useState("");
+  const [answerMode, setAnswerMode] = useState<AnswerMode>("text");
+  const [isDrawAnswerBoardOpen, setIsDrawAnswerBoardOpen] = useState(false);
+  const [isDrawAnswerBoardSubmitted, setIsDrawAnswerBoardSubmitted] =
+    useState(false);
+  const [voiceTutorEnabled, setVoiceTutorEnabled] = useState(false);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -534,6 +747,31 @@ export function LearnView() {
 
   const activeCard = CARDS[activeIndex] as LearnCard | undefined;
   const isFinished = activeIndex >= CARDS.length;
+
+  const conversation = useVoiceConversation();
+
+  const startVoiceTutor = useCallback(async () => {
+    try {
+      await conversation.startSession();
+      setVoiceTutorEnabled(true);
+      setChatError(null);
+    } catch (error) {
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : "Failed to start voice tutor session",
+      );
+      setVoiceTutorEnabled(false);
+    }
+  }, [conversation]);
+
+  const stopVoiceTutor = useCallback(async () => {
+    try {
+      await conversation.endSession();
+    } finally {
+      setVoiceTutorEnabled(false);
+    }
+  }, [conversation]);
 
   const scrollToCard = useCallback((cardId: string) => {
     cardRefs.current[cardId]?.scrollIntoView({
@@ -555,6 +793,17 @@ export function LearnView() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgCount]);
+
+  useEffect(() => {
+    if (conversation.status === "connected") {
+      setVoiceTutorEnabled(true);
+      return;
+    }
+
+    if (conversation.status === "disconnected") {
+      setVoiceTutorEnabled(false);
+    }
+  }, [conversation.status]);
 
   useEffect(() => {
     if (!isBackendChatEnabled || !nodeId || !backendUserId) {
@@ -663,7 +912,11 @@ export function LearnView() {
   }, []);
 
   const sendMessageToTutor = useCallback(
-    async (content: string, channel: "answer" | "clarification") => {
+    async (
+      content: string,
+      channel: "answer" | "clarification",
+      answerKind?: AnswerMode,
+    ) => {
       const trimmedInput = content.trim();
       if (!trimmedInput) return;
 
@@ -675,6 +928,7 @@ export function LearnView() {
         linkedCardId: card?.id ?? null,
         linkedCardTitle: card?.title ?? null,
         channel,
+        answerKind: channel === "answer" ? answerKind : undefined,
       };
 
       if (isBackendChatEnabled && chatSessionId && backendUserId) {
@@ -686,7 +940,7 @@ export function LearnView() {
           const taggedContent =
             channel === "clarification"
               ? `[CLARIFICATION]\n${trimmedInput}`
-              : `[ANSWER]\n${trimmedInput}`;
+              : `[ANSWER]\n${answerKind ? `Mode: ${answerKind}\n` : ""}${trimmedInput}`;
           const response = await sendTutorMessage(chatSessionId, {
             userId: backendUserId,
             content: taggedContent,
@@ -750,12 +1004,49 @@ export function LearnView() {
   const handleSubmitAnswer = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
-      const text = answerInput.trim();
+      let text = "";
+
+      if (answerMode === "text") {
+        text = answerInput.trim();
+      } else if (answerMode === "code") {
+        text = codeAnswerInput.trim();
+      } else if (answerMode === "mcp") {
+        text = mcpAnswerInput.trim();
+      } else {
+        const drawText = drawAnswerInput.trim();
+        if (isDrawAnswerBoardSubmitted && drawText) {
+          text = `${drawText}\n\n[Drawing board submitted]`;
+        } else if (isDrawAnswerBoardSubmitted) {
+          text = "[Drawing board submitted]";
+        } else {
+          text = drawText;
+        }
+      }
+
       if (!text) return;
-      setAnswerInput("");
-      await sendMessageToTutor(text, "answer");
+
+      if (answerMode === "text") {
+        setAnswerInput("");
+      } else if (answerMode === "code") {
+        setCodeAnswerInput("");
+      } else if (answerMode === "mcp") {
+        setMcpAnswerInput("");
+      } else {
+        setDrawAnswerInput("");
+        setIsDrawAnswerBoardSubmitted(false);
+      }
+
+      await sendMessageToTutor(text, "answer", answerMode);
     },
-    [answerInput, sendMessageToTutor],
+    [
+      answerMode,
+      answerInput,
+      codeAnswerInput,
+      mcpAnswerInput,
+      drawAnswerInput,
+      isDrawAnswerBoardSubmitted,
+      sendMessageToTutor,
+    ],
   );
 
   // Only show messages for cards already studied
@@ -770,6 +1061,7 @@ export function LearnView() {
 
     const aiMessages = messages.filter((message) => message.role === "ai");
     let lastKnownQuestion: string | null = null;
+    let lastKnownQuestionType: AnswerMode = "text";
 
     return aiMessages.map((message, index) => {
       const parsed = splitTutorChunk(message.content);
@@ -782,9 +1074,13 @@ export function LearnView() {
           ? (lastKnownQuestion ??
             "What is the key idea from this chunk, in your own words?")
           : null);
+      const questionType =
+        parsed.questionType ??
+        (question && canReusePreviousQuestion ? lastKnownQuestionType : null);
 
       if (question) {
         lastKnownQuestion = question;
+        lastKnownQuestionType = questionType ?? "text";
       }
 
       return {
@@ -792,6 +1088,7 @@ export function LearnView() {
         index,
         explanation: parsed.explanation || message.content,
         question,
+        questionType,
       };
     });
   }, [isBackendChatEnabled, isSessionComplete, messages]);
@@ -800,6 +1097,68 @@ export function LearnView() {
     ? tutorChunks[tutorChunks.length - 1]
     : null;
   const currentQuestion = currentChunk?.question ?? null;
+  const currentQuestionType = currentChunk?.questionType ?? answerMode;
+
+  useEffect(() => {
+    if (!isBackendChatEnabled) return;
+    setAnswerMode(currentChunk?.questionType ?? "text");
+  }, [isBackendChatEnabled, currentChunk?.questionType]);
+
+  useEffect(() => {
+    if (!voiceTutorEnabled || conversation.status !== "connected") return;
+
+    const context = [
+      `Topic: ${nodeTitle ?? "Current subconcept"}`,
+      `Current question: ${currentQuestion ?? "No active question yet."}`,
+      `Current question type: ${currentQuestion ? currentQuestionType : "n/a"}`,
+      `Latest chunk index: ${currentChunk ? currentChunk.index + 1 : 0}`,
+    ].join("\n");
+
+    const timer = setTimeout(() => {
+      conversation.sendContextualUpdate(context);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [
+    voiceTutorEnabled,
+    conversation,
+    nodeTitle,
+    currentQuestion,
+    currentQuestionType,
+    currentChunk,
+  ]);
+
+  const backendTimeline = useMemo(() => {
+    if (!isBackendChatEnabled) return [];
+
+    const chunkById = new Map(tutorChunks.map((chunk) => [chunk.id, chunk]));
+    const timeline: BackendTimelineItem[] = [];
+    let lastAgentItem: Extract<BackendTimelineItem, { kind: "ai" }> | null =
+      null;
+
+    for (const message of messages) {
+      if (message.role === "ai") {
+        const chunk = chunkById.get(message.id);
+        if (!chunk) continue;
+        const agentItem: Extract<BackendTimelineItem, { kind: "ai" }> = {
+          kind: "ai",
+          chunk,
+          answers: [],
+        };
+        timeline.push(agentItem);
+        lastAgentItem = agentItem;
+      } else {
+        if (message.channel === "answer" && lastAgentItem) {
+          lastAgentItem.answers.push(message);
+          continue;
+        }
+
+        timeline.push({ kind: "user", message });
+      }
+    }
+
+    return timeline;
+  }, [isBackendChatEnabled, messages, tutorChunks]);
 
   const sidebarMessages = isBackendChatEnabled
     ? messages.filter(
@@ -811,12 +1170,27 @@ export function LearnView() {
   // Cards to render: completed + active only
   const renderedCards = CARDS.slice(0, activeIndex + 1);
   const nextCard = CARDS[activeIndex + 1] as LearnCard | undefined;
+  const currentAnswerDraft = useMemo(() => {
+    if (answerMode === "text") return answerInput.trim();
+    if (answerMode === "code") return codeAnswerInput.trim();
+    if (answerMode === "mcp") return mcpAnswerInput.trim();
+    if (drawAnswerInput.trim()) return drawAnswerInput.trim();
+    if (isDrawAnswerBoardSubmitted) return "[Drawing board submitted]";
+    return "";
+  }, [
+    answerMode,
+    answerInput,
+    codeAnswerInput,
+    mcpAnswerInput,
+    drawAnswerInput,
+    isDrawAnswerBoardSubmitted,
+  ]);
   const isClarificationSendDisabled =
     !clarifyInput.trim() ||
     isTutorSending ||
     (isBackendChatEnabled && (isChatLoading || !chatSessionId));
   const isAnswerSendDisabled =
-    !answerInput.trim() ||
+    !currentAnswerDraft ||
     isTutorSending ||
     !currentQuestion ||
     (isBackendChatEnabled && (isChatLoading || !chatSessionId));
@@ -836,20 +1210,35 @@ export function LearnView() {
 
     router.push("/graph");
   }, [branchIdFromQuery, conceptIdFromQuery, backendUserId, router]);
-  const graphTheme = {
-    bg: "#0A1A0F",
-    panel: "rgba(17,34,20,0.55)",
-    panelMuted: "rgba(17,34,20,0.42)",
-    border: "rgba(46,232,74,0.16)",
-    borderStrong: "rgba(46,232,74,0.28)",
-    textMuted: "rgba(255,255,255,0.58)",
-    accent: "#2EE84A",
-    accentSoft: "#3DBF5A",
-    accentBg: "rgba(46,232,74,0.1)",
-    accentBgStrong: "rgba(46,232,74,0.16)",
-    accentBorder: "rgba(46,232,74,0.3)",
-    accentText: "#BFF8C9",
-  } as const;
+  const graphTheme = isBackendChatEnabled
+    ? ({
+        bg: "#050608",
+        panel: "rgba(255,255,255,0.035)",
+        panelMuted: "rgba(255,255,255,0.02)",
+        border: "rgba(255,255,255,0.1)",
+        borderStrong: "rgba(255,160,37,0.35)",
+        textMuted: "rgba(255,255,255,0.52)",
+        accent: "#ffa025",
+        accentSoft: "#ffb95a",
+        accentBg: "rgba(255,160,37,0.12)",
+        accentBgStrong: "rgba(255,160,37,0.18)",
+        accentBorder: "rgba(255,160,37,0.28)",
+        accentText: "#ffd089",
+      } as const)
+    : ({
+        bg: "#0A1A0F",
+        panel: "rgba(17,34,20,0.55)",
+        panelMuted: "rgba(17,34,20,0.42)",
+        border: "rgba(46,232,74,0.16)",
+        borderStrong: "rgba(46,232,74,0.28)",
+        textMuted: "rgba(255,255,255,0.58)",
+        accent: "#2EE84A",
+        accentSoft: "#3DBF5A",
+        accentBg: "rgba(46,232,74,0.1)",
+        accentBgStrong: "rgba(46,232,74,0.16)",
+        accentBorder: "rgba(46,232,74,0.3)",
+        accentText: "#BFF8C9",
+      } as const);
 
   return (
     <div
@@ -857,7 +1246,7 @@ export function LearnView() {
       style={{ background: graphTheme.bg }}
     >
       {/* ── Card column ───────────────────────────────────── */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="order-2 flex flex-1 flex-col overflow-hidden">
         {/* Header */}
         <header
           className="flex shrink-0 items-center justify-between border-b px-8 py-4"
@@ -917,111 +1306,343 @@ export function LearnView() {
               </div>
             </div>
           )}
+          {isBackendChatEnabled && (
+            <button
+              type="button"
+              onClick={voiceTutorEnabled ? stopVoiceTutor : startVoiceTutor}
+              className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-all hover:opacity-85 active:scale-[0.98]"
+              style={
+                voiceTutorEnabled
+                  ? {
+                      background: "rgba(239,68,68,0.15)",
+                      borderColor: "rgba(239,68,68,0.35)",
+                      color: "#f87171",
+                    }
+                  : {
+                      background: "rgba(52,211,153,0.1)",
+                      borderColor: "rgba(52,211,153,0.28)",
+                      color: "#34d399",
+                    }
+              }
+            >
+              {voiceTutorEnabled ? (
+                <>
+                  <PhoneOff className="h-3.5 w-3.5" />
+                  End Voice
+                </>
+              ) : (
+                <>
+                  <Radio className="h-3.5 w-3.5" />
+                  Voice Mode
+                </>
+              )}
+            </button>
+          )}
         </header>
 
         {/* Scrollable cards */}
         <div className="flex flex-1 overflow-y-auto">
           {isBackendChatEnabled ? (
             <div className="mx-auto w-full max-w-3xl px-6 py-12">
-              {tutorChunks.length > 0 ? (
+              {backendTimeline.length > 0 ? (
                 <div className="flex flex-col gap-4">
-                  {tutorChunks.map((chunk) => (
-                    <div
-                      key={chunk.id}
-                      className="rounded-2xl border p-6"
-                      style={{
-                        borderColor: graphTheme.border,
-                        background: graphTheme.panel,
-                      }}
-                    >
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <BookOpen
-                            className="h-4 w-4"
-                            style={{ color: graphTheme.accent }}
-                          />
-                          <h2 className="text-sm font-semibold tracking-wide text-white/90 uppercase">
-                            Chunk {chunk.index + 1}
-                          </h2>
-                        </div>
-                        {chunk.index === tutorChunks.length - 1 && (
-                          <span
-                            className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase"
+                  {backendTimeline.map((item) => {
+                    if (item.kind === "user") {
+                      const channelLabel =
+                        item.message.channel === "clarification"
+                          ? "Clarification"
+                          : "Answer";
+                      return (
+                        <div key={item.message.id} className="flex justify-end">
+                          <div
+                            className="max-w-[85%] rounded-2xl rounded-tr-[6px] border px-4 py-3 text-sm leading-6"
                             style={{
-                              background: graphTheme.accentBgStrong,
-                              border: `1px solid ${graphTheme.accentBorder}`,
-                              color: graphTheme.accentText,
+                              background: graphTheme.accentBg,
+                              borderColor: graphTheme.accentBorder,
+                              color: "rgba(255,255,255,0.9)",
                             }}
                           >
-                            Current
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className="text-sm leading-7"
-                        style={{ color: "rgba(255,255,255,0.9)" }}
-                      >
-                        <MarkdownLite content={chunk.explanation} />
-                      </div>
-
-                      {chunk.question && (
-                        <div
-                          className="mt-4 rounded-xl border px-4 py-3"
-                          style={{
-                            borderColor: graphTheme.accentBorder,
-                            background: graphTheme.accentBg,
-                          }}
-                        >
-                          <div
-                            className="mb-1 text-xs font-semibold tracking-wide uppercase"
-                            style={{ color: graphTheme.accentText }}
-                          >
-                            Question
-                          </div>
-                          <div
-                            className="text-sm leading-6"
-                            style={{ color: "rgba(255,255,255,0.95)" }}
-                          >
-                            <MarkdownLite content={chunk.question} />
-                          </div>
-                          {chunk.index === tutorChunks.length - 1 && (
-                            <form
-                              onSubmit={handleSubmitAnswer}
-                              className="mt-3 flex gap-2"
+                            <div
+                              className="mb-1 text-[10px] font-semibold uppercase tracking-wide"
+                              style={{ color: graphTheme.accentText }}
                             >
-                              <input
-                                value={answerInput}
-                                onChange={(e) => setAnswerInput(e.target.value)}
-                                placeholder="Type your answer..."
-                                disabled={
-                                  isTutorSending ||
-                                  (isBackendChatEnabled &&
-                                    (isChatLoading || !chatSessionId))
-                                }
-                                className="flex-1 rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/35"
-                                style={{
-                                  background: "rgba(255,255,255,0.06)",
-                                  border: "1px solid rgba(255,255,255,0.18)",
-                                }}
+                              {channelLabel}
+                            </div>
+                            <MarkdownLite content={item.message.content} />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const chunk = item.chunk;
+                    const isCurrentChunk = chunk.id === currentChunk?.id;
+                    const questionMode = chunk.questionType ?? "text";
+                    const questionMeta = ANSWER_MODE_META[questionMode];
+                    const QuestionModeIcon = questionMeta.Icon;
+                    const canAnswerCurrentQuestion =
+                      isCurrentChunk &&
+                      Boolean(chunk.question) &&
+                      !isSessionComplete;
+
+                    return (
+                      <div
+                        key={chunk.id}
+                        className="relative overflow-hidden rounded-2xl border transition-all duration-300"
+                        style={{
+                          borderColor: isCurrentChunk
+                            ? graphTheme.borderStrong
+                            : graphTheme.border,
+                          background: "rgba(255,255,255,0.03)",
+                          boxShadow: isCurrentChunk
+                            ? "0 10px 36px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
+                            : undefined,
+                        }}
+                      >
+                        <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
+                        <div className="relative p-6">
+                          <div className="mb-4 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <Bot
+                                className="h-4 w-4"
+                                style={{ color: graphTheme.accent }}
                               />
-                              <button
-                                type="submit"
-                                disabled={isAnswerSendDisabled}
-                                className="rounded-lg px-3 py-2 text-sm font-semibold transition-all disabled:opacity-40"
+                              <h2 className="text-sm font-semibold tracking-wide text-white/90 uppercase">
+                                Agent · Chunk {chunk.index + 1}
+                              </h2>
+                            </div>
+                            {isCurrentChunk && (
+                              <span
+                                className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase"
                                 style={{
-                                  background: graphTheme.accent,
-                                  color: "#070d06",
+                                  background: graphTheme.accentBgStrong,
+                                  border: `1px solid ${graphTheme.accentBorder}`,
+                                  color: graphTheme.accentText,
                                 }}
                               >
-                                {isTutorSending ? "Sending..." : "Submit"}
-                              </button>
-                            </form>
+                                Current
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            className="text-sm leading-7"
+                            style={{ color: "rgba(255,255,255,0.9)" }}
+                          >
+                            <MarkdownLite content={chunk.explanation} />
+                          </div>
+
+                          {chunk.question && (
+                            <div
+                              className="mt-5 rounded-2xl border p-5"
+                              style={{
+                                borderColor: graphTheme.accentBorder,
+                                background: "rgba(255,160,37,0.09)",
+                              }}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div
+                                  className="text-xs font-bold uppercase tracking-[0.2em]"
+                                  style={{ color: graphTheme.accentText }}
+                                >
+                                  Question
+                                </div>
+                                <span
+                                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide"
+                                  style={{
+                                    borderColor: "rgba(255,255,255,0.2)",
+                                    background: "rgba(255,255,255,0.05)",
+                                    color: "rgba(255,255,255,0.82)",
+                                  }}
+                                >
+                                  <QuestionModeIcon className="h-3 w-3" />
+                                  {questionMeta.label}
+                                </span>
+                              </div>
+
+                              <div
+                                className="mt-3 text-sm leading-7"
+                                style={{ color: "rgba(255,255,255,0.95)" }}
+                              >
+                                <MarkdownLite content={chunk.question} />
+                              </div>
+                              <div
+                                className="mt-2 text-xs"
+                                style={{ color: "rgba(255,255,255,0.56)" }}
+                              >
+                                {questionMeta.helper}
+                              </div>
+
+                              {item.answers.length > 0 && (
+                                <div
+                                  className="mt-4 flex flex-col gap-3 border-t pt-4"
+                                  style={{
+                                    borderColor: "rgba(255,255,255,0.12)",
+                                  }}
+                                >
+                                  {item.answers.map((answer) => {
+                                    const answerKind = answer.answerKind;
+                                    const answerLabel = answerKind
+                                      ? ANSWER_MODE_META[answerKind].label
+                                      : questionMeta.label;
+                                    return (
+                                      <div key={answer.id}>
+                                        <div
+                                          className="mb-1 text-xs font-semibold uppercase tracking-wide"
+                                          style={{
+                                            color: graphTheme.accentText,
+                                          }}
+                                        >
+                                          Your answer · {answerLabel}
+                                        </div>
+                                        <div
+                                          className="text-sm leading-6"
+                                          style={{
+                                            color: "rgba(255,255,255,0.9)",
+                                          }}
+                                        >
+                                          <MarkdownLite
+                                            content={answer.content}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {canAnswerCurrentQuestion && (
+                                <form
+                                  onSubmit={handleSubmitAnswer}
+                                  className="mt-4 space-y-3 border-t pt-4"
+                                  style={{
+                                    borderColor: "rgba(255,255,255,0.12)",
+                                  }}
+                                >
+                                  <div
+                                    className="text-xs font-semibold uppercase tracking-wide"
+                                    style={{ color: graphTheme.accentText }}
+                                  >
+                                    Your answer
+                                  </div>
+                                  {answerMode === "text" && (
+                                    <textarea
+                                      value={answerInput}
+                                      onChange={(e) =>
+                                        setAnswerInput(e.target.value)
+                                      }
+                                      placeholder={questionMeta.placeholder}
+                                      disabled={isTutorSending || isChatLoading}
+                                      className="h-24 w-full resize-none rounded-xl px-3 py-2 text-sm text-white outline-none placeholder:text-white/25"
+                                      style={{
+                                        background: "rgba(255,255,255,0.06)",
+                                        border: `1px solid ${graphTheme.border}`,
+                                      }}
+                                    />
+                                  )}
+                                  {answerMode === "code" && (
+                                    <textarea
+                                      value={codeAnswerInput}
+                                      onChange={(e) =>
+                                        setCodeAnswerInput(e.target.value)
+                                      }
+                                      placeholder={questionMeta.placeholder}
+                                      disabled={isTutorSending || isChatLoading}
+                                      className="h-40 w-full resize-none rounded-xl px-3 py-2 font-mono text-xs text-white outline-none placeholder:text-white/25"
+                                      style={{
+                                        background: "rgba(255,255,255,0.06)",
+                                        border: `1px solid ${graphTheme.border}`,
+                                      }}
+                                    />
+                                  )}
+                                  {answerMode === "draw" && (
+                                    <div className="space-y-2">
+                                      <textarea
+                                        value={drawAnswerInput}
+                                        onChange={(e) =>
+                                          setDrawAnswerInput(e.target.value)
+                                        }
+                                        placeholder={questionMeta.placeholder}
+                                        disabled={
+                                          isTutorSending || isChatLoading
+                                        }
+                                        className="h-24 w-full resize-none rounded-xl px-3 py-2 text-sm text-white outline-none placeholder:text-white/25"
+                                        style={{
+                                          background: "rgba(255,255,255,0.06)",
+                                          border: `1px solid ${graphTheme.border}`,
+                                        }}
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setIsDrawAnswerBoardOpen(true)
+                                          }
+                                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold transition-all hover:opacity-85"
+                                          style={{
+                                            background:
+                                              "rgba(244,114,182,0.12)",
+                                            borderColor:
+                                              "rgba(244,114,182,0.28)",
+                                            color: "#f9a8d4",
+                                          }}
+                                        >
+                                          <PenLine className="h-3.5 w-3.5" />
+                                          Open board
+                                        </button>
+                                        {isDrawAnswerBoardSubmitted && (
+                                          <div
+                                            className="inline-flex items-center gap-1 text-xs font-medium"
+                                            style={{ color: "#86efac" }}
+                                          >
+                                            <Check className="h-3.5 w-3.5" />
+                                            Board submitted
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {answerMode === "mcp" && (
+                                    <textarea
+                                      value={mcpAnswerInput}
+                                      onChange={(e) =>
+                                        setMcpAnswerInput(e.target.value)
+                                      }
+                                      placeholder={questionMeta.placeholder}
+                                      disabled={isTutorSending || isChatLoading}
+                                      className="h-24 w-full resize-none rounded-xl px-3 py-2 text-sm text-white outline-none placeholder:text-white/25"
+                                      style={{
+                                        background: "rgba(255,255,255,0.06)",
+                                        border: `1px solid ${graphTheme.border}`,
+                                      }}
+                                    />
+                                  )}
+
+                                  <button
+                                    type="submit"
+                                    disabled={isAnswerSendDisabled}
+                                    className="flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-35"
+                                    style={{
+                                      background: graphTheme.accent,
+                                      color: "#070d06",
+                                    }}
+                                  >
+                                    {isTutorSending ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Send className="h-4 w-4" />
+                                    )}
+                                    Submit {questionMeta.label.toLowerCase()}{" "}
+                                    answer
+                                  </button>
+                                </form>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
+                  <div ref={chatEndRef} />
                 </div>
               ) : isChatLoading || isNodeLoading ? (
                 <div
@@ -1055,7 +1676,7 @@ export function LearnView() {
                     <MarkdownLite
                       content={
                         nodeExplanation ??
-                        "No tutor chunks yet. Ask a question in the right chat to start the tutoring flow."
+                        "No tutor chunks yet. Ask the agent to start the tutoring flow."
                       }
                     />
                   </div>
@@ -1232,227 +1853,468 @@ export function LearnView() {
         </div>
       </div>
 
-      {/* ── AI Chat ───────────────────────────────────────── */}
-      <aside
-        className="flex w-[400px] shrink-0 flex-col border-l"
-        style={{
-          borderColor: graphTheme.border,
-          background: graphTheme.panelMuted,
-        }}
-      >
-        {/* Chat header */}
-        <div
-          className="flex shrink-0 items-center gap-3 border-b px-5 py-4"
-          style={{ borderColor: graphTheme.border }}
-        >
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+      {isBackendChatEnabled && voiceTutorEnabled ? (
+        <VoiceAgentPanel
+          status={conversation.status}
+          isSpeaking={conversation.isSpeaking}
+          nodeTitle={nodeTitle}
+          onStop={() => void stopVoiceTutor()}
+        />
+      ) : (
+        <>
+          {/* ── AI Chat ───────────────────────────────────────── */}
+          <aside
+            className="order-1 flex w-[400px] shrink-0 flex-col border-r"
             style={{
-              background: graphTheme.accentBg,
-              border: `1px solid ${graphTheme.accentBorder}`,
+              borderColor: graphTheme.border,
+              background: graphTheme.panelMuted,
             }}
           >
-            <Bot className="h-4 w-4" style={{ color: graphTheme.accent }} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-white">
-              {isBackendChatEnabled ? "Clarification Chat" : "AI Tutor"}
-            </div>
+            {/* Chat header */}
             <div
-              className="text-xs"
-              style={{ color: "rgba(255,255,255,0.38)" }}
+              className="flex shrink-0 items-center gap-3 border-b px-5 py-4"
+              style={{ borderColor: graphTheme.border }}
             >
-              {isBackendChatEnabled
-                ? "Ask clarifying questions. New chunks appear in the center."
-                : "Click a message to jump to its card"}
-            </div>
-          </div>
-          {!isBackendChatEnabled && !isFinished && (
-            <div
-              className="shrink-0 rounded-full px-3 py-1 text-xs font-bold"
-              style={{
-                background: "rgba(255,255,255,0.08)",
-                border: "1px solid rgba(255,255,255,0.15)",
-                color: "rgba(255,255,255,0.8)",
-              }}
-            >
-              Card {activeIndex + 1}
-            </div>
-          )}
-        </div>
-
-        {/* Messages */}
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5">
-          {isBackendChatEnabled && isChatLoading && (
-            <div
-              className="rounded-xl border px-3 py-2 text-xs"
-              style={{
-                borderColor: graphTheme.border,
-                background: graphTheme.panel,
-                color: graphTheme.textMuted,
-              }}
-            >
-              Connecting to tutor...
-            </div>
-          )}
-          {chatError && (
-            <div
-              className="rounded-xl border px-3 py-2 text-xs"
-              style={{
-                borderColor: "rgba(255,120,120,0.3)",
-                background: "rgba(255,80,80,0.08)",
-                color: "rgba(255,200,200,0.95)",
-              }}
-            >
-              {chatError}
-            </div>
-          )}
-          {isBackendChatEnabled &&
-            !isChatLoading &&
-            !chatError &&
-            sidebarMessages.length === 0 && (
               <div
-                className="rounded-xl border px-3 py-2 text-xs"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
                 style={{
-                  borderColor: graphTheme.border,
-                  background: graphTheme.panel,
-                  color: graphTheme.textMuted,
+                  background: graphTheme.accentBg,
+                  border: `1px solid ${graphTheme.accentBorder}`,
                 }}
               >
-                Ask your first clarification about the current chunk.
+                <Bot className="h-4 w-4" style={{ color: graphTheme.accent }} />
               </div>
-            )}
-          {sidebarMessages.map((msg) => {
-            const cardIdx = msg.linkedCardId
-              ? CARDS.findIndex((c) => c.id === msg.linkedCardId)
-              : -1;
-            const isClickable = msg.linkedCardId !== null && cardIdx !== -1;
-            return (
-              <div
-                key={msg.id}
-                className={cn(
-                  "flex flex-col gap-1.5",
-                  msg.role === "user" ? "items-end" : "items-start",
-                )}
-              >
-                {/* Card badge */}
-                {msg.linkedCardId && cardIdx !== -1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isClickable && msg.linkedCardId)
-                        scrollToCard(msg.linkedCardId);
-                    }}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all",
-                      isClickable && "cursor-pointer hover:opacity-80",
-                    )}
-                    style={{
-                      background: "rgba(17,34,20,0.8)",
-                      border: `1px solid ${graphTheme.border}`,
-                      color:
-                        msg.role === "ai"
-                          ? "rgba(255,255,255,0.6)"
-                          : "rgba(255,255,255,0.4)",
-                    }}
-                  >
-                    <span style={{ opacity: 0.6 }}>↗</span>
-                    <span className="max-w-[190px] truncate">
-                      Card {cardIdx + 1} · {msg.linkedCardTitle}
-                    </span>
-                  </button>
-                )}
-                {/* Bubble */}
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-bold text-white">
+                  {isBackendChatEnabled ? "Clarification Chat" : "AI Tutor"}
+                </div>
                 <div
-                  className={cn(
-                    "max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                    msg.role === "ai" ? "rounded-tl-[4px]" : "rounded-tr-[4px]",
-                  )}
-                  style={{
-                    background:
-                      msg.role === "ai"
-                        ? "rgba(17,34,20,0.8)"
-                        : graphTheme.accentBg,
-                    border:
-                      msg.role === "ai"
-                        ? `1px solid ${graphTheme.border}`
-                        : `1px solid ${graphTheme.accentBorder}`,
-                    color:
-                      msg.role === "ai"
-                        ? "rgba(255,255,255,0.88)"
-                        : "rgba(255,255,255,0.82)",
-                  }}
+                  className="text-xs"
+                  style={{ color: "rgba(255,255,255,0.38)" }}
                 >
-                  <MarkdownLite content={msg.content} />
+                  {isBackendChatEnabled
+                    ? "Ask clarifying questions. New chunks appear in the center."
+                    : "Click a message to jump to its card"}
                 </div>
               </div>
-            );
-          })}
-          <div ref={chatEndRef} />
+              {!isBackendChatEnabled && !isFinished && (
+                <div
+                  className="shrink-0 rounded-full px-3 py-1 text-xs font-bold"
+                  style={{
+                    background: "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.8)",
+                  }}
+                >
+                  Card {activeIndex + 1}
+                </div>
+              )}
+            </div>
+
+            {/* Messages */}
+            <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5">
+              {isBackendChatEnabled && isChatLoading && (
+                <div
+                  className="rounded-xl border px-3 py-2 text-xs"
+                  style={{
+                    borderColor: graphTheme.border,
+                    background: graphTheme.panel,
+                    color: graphTheme.textMuted,
+                  }}
+                >
+                  Connecting to tutor...
+                </div>
+              )}
+              {chatError && (
+                <div
+                  className="rounded-xl border px-3 py-2 text-xs"
+                  style={{
+                    borderColor: "rgba(255,120,120,0.3)",
+                    background: "rgba(255,80,80,0.08)",
+                    color: "rgba(255,200,200,0.95)",
+                  }}
+                >
+                  {chatError}
+                </div>
+              )}
+              {isBackendChatEnabled &&
+                !isChatLoading &&
+                !chatError &&
+                sidebarMessages.length === 0 && (
+                  <div
+                    className="rounded-xl border px-3 py-2 text-xs"
+                    style={{
+                      borderColor: graphTheme.border,
+                      background: graphTheme.panel,
+                      color: graphTheme.textMuted,
+                    }}
+                  >
+                    Ask your first clarification about the current chunk.
+                  </div>
+                )}
+              {sidebarMessages.map((msg) => {
+                const cardIdx = msg.linkedCardId
+                  ? CARDS.findIndex((c) => c.id === msg.linkedCardId)
+                  : -1;
+                const isClickable = msg.linkedCardId !== null && cardIdx !== -1;
+                return (
+                  <div
+                    key={msg.id}
+                    className={cn(
+                      "flex flex-col gap-1.5",
+                      msg.role === "user" ? "items-end" : "items-start",
+                    )}
+                  >
+                    {/* Card badge */}
+                    {msg.linkedCardId && cardIdx !== -1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isClickable && msg.linkedCardId)
+                            scrollToCard(msg.linkedCardId);
+                        }}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all",
+                          isClickable && "cursor-pointer hover:opacity-80",
+                        )}
+                        style={{
+                          background: "rgba(17,34,20,0.8)",
+                          border: `1px solid ${graphTheme.border}`,
+                          color:
+                            msg.role === "ai"
+                              ? "rgba(255,255,255,0.6)"
+                              : "rgba(255,255,255,0.4)",
+                        }}
+                      >
+                        <span style={{ opacity: 0.6 }}>↗</span>
+                        <span className="max-w-[190px] truncate">
+                          Card {cardIdx + 1} · {msg.linkedCardTitle}
+                        </span>
+                      </button>
+                    )}
+                    {/* Bubble */}
+                    <div
+                      className={cn(
+                        "max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                        msg.role === "ai"
+                          ? "rounded-tl-[4px]"
+                          : "rounded-tr-[4px]",
+                      )}
+                      style={{
+                        background:
+                          msg.role === "ai"
+                            ? "rgba(17,34,20,0.8)"
+                            : graphTheme.accentBg,
+                        border:
+                          msg.role === "ai"
+                            ? `1px solid ${graphTheme.border}`
+                            : `1px solid ${graphTheme.accentBorder}`,
+                        color:
+                          msg.role === "ai"
+                            ? "rgba(255,255,255,0.88)"
+                            : "rgba(255,255,255,0.82)",
+                      }}
+                    >
+                      <MarkdownLite content={msg.content} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input */}
+            <div
+              className="shrink-0 border-t p-4"
+              style={{ borderColor: graphTheme.border }}
+            >
+              {!isBackendChatEnabled && !isFinished && activeCard && (
+                <div
+                  className="mb-2.5 flex items-center gap-1.5 text-xs"
+                  style={{ color: "rgba(255,255,255,0.4)" }}
+                >
+                  <span>Asking about</span>
+                  <span
+                    className="max-w-[220px] truncate font-medium"
+                    style={{ color: graphTheme.accent }}
+                  >
+                    Card {activeIndex + 1} · {activeCard.title}
+                  </span>
+                </div>
+              )}
+              {isBackendChatEnabled && (
+                <div
+                  className="mb-2.5 rounded-xl border px-3 py-2 text-xs leading-relaxed"
+                  style={{
+                    borderColor: graphTheme.border,
+                    background: graphTheme.panel,
+                    color: graphTheme.textMuted,
+                  }}
+                >
+                  Clarification chat only. Submit checkpoint answers in the
+                  center panel.
+                </div>
+              )}
+              <form onSubmit={handleSendClarification} className="flex gap-2">
+                <input
+                  value={clarifyInput}
+                  onChange={(e) => setClarifyInput(e.target.value)}
+                  placeholder={
+                    isBackendChatEnabled
+                      ? "Ask a clarification..."
+                      : isFinished
+                        ? "Ask a follow-up..."
+                        : "Ask anything..."
+                  }
+                  disabled={isChatLoading || isTutorSending}
+                  className="flex-1 rounded-xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/20 transition-colors"
+                  style={{
+                    background: "rgba(17,34,20,0.78)",
+                    border: `1px solid ${graphTheme.border}`,
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = graphTheme.accentBorder;
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = graphTheme.border;
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={isClarificationSendDisabled}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-25 hover:opacity-85 active:scale-95"
+                  style={{ background: graphTheme.accent }}
+                >
+                  {isTutorSending ? (
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      style={{ color: "#070d06" }}
+                    />
+                  ) : (
+                    <Send className="h-4 w-4" style={{ color: "#070d06" }} />
+                  )}
+                </button>
+              </form>
+            </div>
+          </aside>
+        </>
+      )}
+
+      {isBackendChatEnabled &&
+        isDrawAnswerBoardOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{
+              background: "rgba(7,13,6,0.75)",
+              backdropFilter: "blur(6px)",
+            }}
+          >
+            <div
+              className="flex flex-col overflow-hidden rounded-2xl"
+              style={{
+                width: "80vw",
+                height: "80vh",
+                background: "#16213e",
+                border: "1px solid rgba(244,114,182,0.3)",
+                boxShadow:
+                  "0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04) inset",
+              }}
+            >
+              <div
+                className="flex shrink-0 items-center justify-between border-b px-6 py-4"
+                style={{ borderColor: "rgba(244,114,182,0.18)" }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-8 w-8 items-center justify-center rounded-lg"
+                    style={{
+                      background: "rgba(244,114,182,0.12)",
+                      border: "1px solid rgba(244,114,182,0.25)",
+                    }}
+                  >
+                    <PenLine className="h-4 w-4" style={{ color: "#f472b6" }} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white">
+                      Draw your answer
+                    </div>
+                    <div
+                      className="text-xs"
+                      style={{ color: "rgba(255,255,255,0.35)" }}
+                    >
+                      Submit board and continue in the current question card
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDrawAnswerBoardOpen(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg transition-all hover:opacity-70"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                  }}
+                >
+                  <X className="h-4 w-4 text-white" />
+                </button>
+              </div>
+
+              <div className="relative min-h-0 flex-1">
+                <ExcalidrawBoard
+                  onSubmit={() => {
+                    setIsDrawAnswerBoardSubmitted(true);
+                    setIsDrawAnswerBoardOpen(false);
+                  }}
+                  isSubmitted={false}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+function VoiceAgentPanel({
+  status,
+  isSpeaking,
+  nodeTitle,
+  onStop,
+}: {
+  status: string;
+  isSpeaking: boolean;
+  nodeTitle: string | null;
+  onStop: () => void;
+}) {
+  const isConnected = status === "connected";
+  const isConnecting = status === "connecting";
+
+  return (
+    <aside
+      className="order-1 flex w-[400px] shrink-0 flex-col border-r"
+      style={{
+        borderColor: "rgba(52,211,153,0.15)",
+        background: "rgba(52,211,153,0.02)",
+      }}
+    >
+      <div
+        className="flex shrink-0 items-center gap-3 border-b px-5 py-4"
+        style={{ borderColor: "rgba(52,211,153,0.12)" }}
+      >
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+          style={{
+            background: isConnected
+              ? "rgba(52,211,153,0.15)"
+              : "rgba(255,255,255,0.06)",
+            border: `1px solid ${isConnected ? "rgba(52,211,153,0.35)" : "rgba(255,255,255,0.12)"}`,
+          }}
+        >
+          <Radio
+            className={cn("h-4 w-4", isConnected && "animate-pulse")}
+            style={{ color: isConnected ? "#34d399" : "rgba(255,255,255,0.4)" }}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-white">Voice Tutor</div>
+          <div className="text-xs" style={{ color: "rgba(255,255,255,0.38)" }}>
+            {isConnecting
+              ? "Connecting..."
+              : isConnected
+                ? isSpeaking
+                  ? "Agent is speaking"
+                  : "Listening"
+                : "Disconnected"}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8">
+        <SproutAvatar
+          isSpeaking={isConnected && isSpeaking}
+          isListening={isConnected && !isSpeaking}
+          size={180}
+        />
+
+        <div className="text-center">
+          <div
+            className="text-base font-bold"
+            style={{
+              color: isConnected ? "#34d399" : "rgba(255,255,255,0.3)",
+            }}
+          >
+            {isConnecting
+              ? "Starting session..."
+              : isConnected
+                ? isSpeaking
+                  ? "AI tutor is speaking"
+                  : "Speak now"
+                : "Voice tutor ended"}
+          </div>
+          <div
+            className="mt-1 text-sm"
+            style={{ color: "rgba(255,255,255,0.3)" }}
+          >
+            {isConnected
+              ? "Ask anything about the current subconcept"
+              : "Reconnect from header button"}
+          </div>
         </div>
 
-        {/* Input */}
         <div
-          className="shrink-0 border-t p-4"
-          style={{ borderColor: graphTheme.border }}
+          className="w-full rounded-xl p-4"
+          style={{
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.09)",
+          }}
         >
-          {!isBackendChatEnabled && !isFinished && activeCard && (
-            <div
-              className="mb-2.5 flex items-center gap-1.5 text-xs"
-              style={{ color: "rgba(255,255,255,0.4)" }}
-            >
-              <span>Asking about</span>
-              <span
-                className="max-w-[220px] truncate font-medium"
-                style={{ color: graphTheme.accent }}
-              >
-                Card {activeIndex + 1} · {activeCard.title}
-              </span>
-            </div>
-          )}
-          <form onSubmit={handleSendClarification} className="flex gap-2">
-            <input
-              value={clarifyInput}
-              onChange={(e) => setClarifyInput(e.target.value)}
-              placeholder={
-                isBackendChatEnabled
-                  ? "Ask for clarification..."
-                  : isFinished
-                    ? "Ask a follow-up..."
-                    : "Ask anything..."
-              }
-              disabled={isChatLoading || isTutorSending}
-              className="flex-1 rounded-xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/20 transition-colors"
+          <div
+            className="mb-2 text-xs font-bold uppercase tracking-widest"
+            style={{ color: "rgba(255,255,255,0.3)" }}
+          >
+            Current context
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span
+              className="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wide"
               style={{
-                background: "rgba(17,34,20,0.78)",
-                border: `1px solid ${graphTheme.border}`,
+                background: "rgba(255,160,37,0.12)",
+                border: "1px solid rgba(255,160,37,0.3)",
+                color: "#ffa025",
               }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = graphTheme.accentBorder;
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = graphTheme.border;
-              }}
-            />
-            <button
-              type="submit"
-              disabled={isClarificationSendDisabled}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-25 hover:opacity-85 active:scale-95"
-              style={{ background: graphTheme.accent }}
             >
-              {isTutorSending ? (
-                <Loader2
-                  className="h-4 w-4 animate-spin"
-                  style={{ color: "#070d06" }}
-                />
+              Subconcept
+            </span>
+            <span className="truncate text-sm font-medium text-white">
+              {nodeTitle ?? "Current topic"}
+            </span>
+            <span className="ml-auto shrink-0">
+              {isConnected ? (
+                <Mic className="h-4 w-4 text-emerald-300" />
               ) : (
-                <Send className="h-4 w-4" style={{ color: "#070d06" }} />
+                <MicOff className="h-4 w-4 text-white/40" />
               )}
-            </button>
-          </form>
+            </span>
+          </div>
         </div>
-      </aside>
-    </div>
+
+        <button
+          type="button"
+          onClick={onStop}
+          className="flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all hover:opacity-85 active:scale-95"
+          style={{
+            background: "rgba(239,68,68,0.12)",
+            border: "1px solid rgba(239,68,68,0.28)",
+            color: "#f87171",
+          }}
+        >
+          <PhoneOff className="h-4 w-4" />
+          End Session
+        </button>
+      </div>
+    </aside>
   );
 }
 
