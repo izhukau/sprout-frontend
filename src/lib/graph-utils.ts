@@ -111,6 +111,22 @@ export function toForceGraphData(
   const forceNodes: ForceNode[] = nodes.map((n) => {
     const existingNode = previousNodesById.get(n.id);
     if (!existingNode) {
+      // Seed position near parent node to avoid spawning at origin
+      const parentNode = n.data.parentId
+        ? previousNodesById.get(n.data.parentId)
+        : null;
+      const parentPos = parentNode as
+        | (ForceNode & { x?: number; y?: number; z?: number })
+        | undefined;
+      const seededPos =
+        parentPos?.x != null
+          ? {
+              x: parentPos.x + (Math.random() - 0.5) * 30,
+              y: (parentPos.y ?? 0) + (Math.random() - 0.5) * 30,
+              z: ((parentPos as { z?: number }).z ?? 0) + (Math.random() - 0.5) * 30,
+            }
+          : {};
+
       return {
         id: n.id,
         label: n.data.label,
@@ -118,6 +134,7 @@ export function toForceGraphData(
         completed: !!n.data.completed,
         branchId: n.data.branchId,
         val: sizeMap[n.data.variant],
+        ...seededPos,
       };
     }
 

@@ -51,19 +51,33 @@ export function ForceGraphView({
     links: [],
   });
   const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinnedNodeIds = useRef(new Set<string>());
   const graphData = useMemo(() => {
     graphDataRef.current = toForceGraphData(nodes, graphDataRef.current, dependencyEdges);
     return graphDataRef.current;
   }, [nodes, dependencyEdges]);
-  // Pin all nodes after 500ms so they stay put when the next node arrives
+  // Pin nodes after settling — preserve existing pins so only new nodes float
   useEffect(() => {
     if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+
+    // Immediately re-pin already-settled nodes so they don't jump
+    for (const n of graphData.nodes) {
+      const node = n as ForceNode & { x?: number; y?: number; z?: number; fx?: number; fy?: number; fz?: number };
+      if (pinnedNodeIds.current.has(node.id)) {
+        if (node.x != null) node.fx = node.x;
+        if (node.y != null) node.fy = node.y;
+        if (node.z != null) node.fz = node.z;
+      }
+    }
+
+    // After settling, pin everything including new nodes
     pinTimerRef.current = setTimeout(() => {
       for (const n of graphData.nodes) {
         const node = n as ForceNode & { x?: number; y?: number; z?: number; fx?: number; fy?: number; fz?: number };
         if (node.x != null) node.fx = node.x;
         if (node.y != null) node.fy = node.y;
         if (node.z != null) node.fz = node.z;
+        pinnedNodeIds.current.add(node.id);
       }
     }, 500);
     return () => {

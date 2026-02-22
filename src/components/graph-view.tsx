@@ -9,15 +9,18 @@ import GraphCanvas from "@/components/graph-canvas";
 import type { GraphNode, NodeVariant } from "@/components/graph-node";
 import { GraphSidebar, type GraphView } from "@/components/graph-sidebar";
 import { NewBranchDialog } from "@/components/new-branch-dialog";
+import { ConceptDiagnosticChat } from "@/components/concept-diagnostic-chat";
+import { HandCursor } from "@/components/hand-cursor";
 import { type StreamMutation, useAgentStream } from "@/hooks/use-agent-stream";
 import { useAuth } from "@/hooks/use-auth";
 import { useHandTracking } from "@/hooks/use-hand-tracking";
-import { HandCursor } from "@/components/hand-cursor";
 import {
   type BackendBranch,
   type BackendEdge,
   type BackendNode,
   type BackendProgress,
+  type BackendAssessment,
+  type BackendQuestion,
   createBranch,
   createNode,
   createUser,
@@ -35,6 +38,7 @@ import {
   getConceptNodesForBranch,
   getSubconceptNodesForConcept,
 } from "@/lib/graph-utils";
+import { getConceptDiagnostic } from "@/lib/backend-api";
 
 const USER_ID_STORAGE_KEY = "sprout_user_id";
 
@@ -188,6 +192,15 @@ export function GraphViewContainer() {
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
+  const [pendingDiagnostic, setPendingDiagnostic] = useState<{
+    conceptId: string;
+    conceptTitle: string;
+    assessment: BackendAssessment;
+    questions: BackendQuestion[];
+    requiredAnswers: number;
+  } | null>(null);
+  const [dismissedDiagnosticConcepts, setDismissedDiagnosticConcepts] =
+    useState<Set<string>>(new Set());
 
   const [branches, setBranches] = useState<BackendBranch[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
@@ -202,6 +215,7 @@ export function GraphViewContainer() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isNewBranchOpen, setIsNewBranchOpen] = useState(false);
+  const isSmallAgents = process.env.NEXT_PUBLIC_SMALL_AGENTS === "true";
   const [handTrackingEnabled, setHandTrackingEnabled] = useState(false);
   const { handPos, connected: handConnected } = useHandTracking(
     "ws://localhost:8765",
@@ -213,6 +227,45 @@ export function GraphViewContainer() {
   useEffect(() => {
     backendNodesRef.current = backendNodes;
   }, [backendNodes]);
+  // Optional diagnostic fetch on concept entry
+  useEffect(() => {
+    let cancelled = false;
+    const loadDiagnostic = async () => {
+      if (view.level !== "concept") {
+        setPendingDiagnostic(null);
+        return;
+      }
+      if (!activeUserId) return;
+      if (dismissedDiagnosticConcepts.has(view.conceptId)) return;
+      try {
+        const result = await getConceptDiagnostic({
+          conceptId: view.conceptId,
+          userId: activeUserId,
+        });
+        if (cancelled) return;
+        if (result.answeredCount >= result.requiredAnswers) {
+          setPendingDiagnostic(null);
+          return;
+        }
+        const conceptTitle =
+          backendNodesRef.current.find((n) => n.id === view.conceptId)?.title ??
+          "Concept";
+        setPendingDiagnostic({
+          conceptId: view.conceptId,
+          conceptTitle,
+          assessment: result.assessment,
+          questions: result.questions,
+          requiredAnswers: result.requiredAnswers,
+        });
+      } catch {
+        /* optional; ignore errors */
+      }
+    };
+    void loadDiagnostic();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, activeUserId, dismissedDiagnosticConcepts]);
 
   const completedSetRef = useRef<Set<string>>(new Set());
 
@@ -358,14 +411,7 @@ export function GraphViewContainer() {
 
       case "json_response": {
         const data = mutation.data as Record<string, unknown>;
-        if (data.status === "awaiting_answers") {
-          // Diagnostic questions need to be answered first.
-          // Store for future diagnostic UI integration.
-          console.info(
-            "[GraphView] Concept awaiting diagnostic answers:",
-            data,
-          );
-        } else if (data.status === "not_ready") {
+        if (data.status === "not_ready") {
           setError(
             "Diagnostic questions are still being generated. Please wait a moment and try again.",
           );
@@ -384,6 +430,18 @@ export function GraphViewContainer() {
     activityLog,
     clearActivityLog,
   } = useAgentStream({ onMutation: handleStreamMutation });
+
+  const resumeConceptRun = useCallback(
+    (conceptId: string) => {
+      if (!activeUserId) return;
+      seedKnownNodes(backendNodesRef.current.map((n) => n.id));
+      void startStream(`${SSE_BASE_URL}/api/agents/concepts/${conceptId}/run`, {
+        userId: activeUserId,
+        ...(isSmallAgents && { small: true }),
+      });
+    },
+    [activeUserId, seedKnownNodes, startStream, isSmallAgents],
+  );
 
   const refreshGraph = useCallback(async (userId: string) => {
     const [nodesRows, progressRows] = await Promise.all([
@@ -981,7 +1039,11 @@ export function GraphViewContainer() {
         <button
           type="button"
           onClick={() => setHandTrackingEnabled((prev) => !prev)}
-          title={handTrackingEnabled ? "Disable hand tracking" : "Enable hand tracking"}
+          title={
+            handTrackingEnabled
+              ? "Disable hand tracking"
+              : "Enable hand tracking"
+          }
           className={[
             "absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
             handTrackingEnabled
@@ -1069,6 +1131,28 @@ export function GraphViewContainer() {
           isStreaming={isStreaming}
           error={streamError}
           onDismiss={clearActivityLog}
+        />
+      )}
+
+      {pendingDiagnostic && activeUserId && (
+        <ConceptDiagnosticChat
+          userId={activeUserId}
+          conceptTitle={pendingDiagnostic.conceptTitle}
+          assessment={pendingDiagnostic.assessment}
+          questions={pendingDiagnostic.questions}
+          requiredAnswers={pendingDiagnostic.requiredAnswers}
+          onComplete={() => {
+            setPendingDiagnostic(null);
+            resumeConceptRun(pendingDiagnostic.conceptId);
+          }}
+          onClose={() => {
+            setPendingDiagnostic(null);
+            setDismissedDiagnosticConcepts((prev) => {
+              const next = new Set(prev);
+              next.add(pendingDiagnostic.conceptId);
+              return next;
+            });
+          }}
         />
       )}
     </div>
