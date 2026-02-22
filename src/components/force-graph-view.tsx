@@ -236,12 +236,15 @@ export function ForceGraphView({
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          canvas.width = 512;
           canvas.height = 64;
+          ctx.font = "24px monospace";
+          const textWidth = ctx.measureText(label).width;
+          canvas.width = textWidth + 32;
+          // Re-apply after canvas resize (resize resets context state)
           ctx.font = "24px monospace";
           ctx.textAlign = "center";
           ctx.fillStyle = `rgba(255, 255, 255, ${opacity * 0.8})`;
-          ctx.fillText(label, 256, 40);
+          ctx.fillText(label, canvas.width / 2, 40);
 
           const texture = new THREE.CanvasTexture(canvas);
           const spriteMaterial = new THREE.SpriteMaterial({
@@ -249,7 +252,7 @@ export function ForceGraphView({
             transparent: true,
           });
           const sprite = new THREE.Sprite(spriteMaterial);
-          sprite.scale.set(32, 4, 1);
+          sprite.scale.set(canvas.width / 16, 4, 1);
           sprite.position.set(0, -(radius + 3), 0);
           mesh.add(sprite);
         }
