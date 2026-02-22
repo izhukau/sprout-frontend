@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, GitBranch, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, GitBranch, Plus, X } from "lucide-react";
 import { useMemo } from "react";
 import type { GraphNode } from "@/components/graph-node";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ type GraphSidebarProps = {
   onSelectConcept: (conceptId: string) => void;
   onOpenConcept: (conceptId: string) => void;
   onSelectSubconcept: (subconceptId: string) => void;
+  onDeleteBranch: (branchId: string) => void;
   onBack: () => void;
   onNewBranch: () => void;
 };
@@ -38,6 +39,7 @@ export function GraphSidebar({
   onSelectConcept,
   onOpenConcept,
   onSelectSubconcept,
+  onDeleteBranch,
   onBack,
   onNewBranch,
 }: GraphSidebarProps) {
@@ -76,6 +78,7 @@ export function GraphSidebar({
               highlightedBranchId={highlightedBranchId}
               onSelectBranch={onSelectBranch}
               onOpenBranch={onOpenBranch}
+              onDeleteBranch={onDeleteBranch}
               onNewBranch={onNewBranch}
             />
           )}
@@ -106,6 +109,7 @@ function GlobalLevel({
   highlightedBranchId,
   onSelectBranch,
   onOpenBranch,
+  onDeleteBranch,
   onNewBranch,
 }: {
   branches: BackendBranch[];
@@ -113,6 +117,7 @@ function GlobalLevel({
   highlightedBranchId: string | null;
   onSelectBranch: (id: string) => void;
   onOpenBranch: (id: string) => void;
+  onDeleteBranch: (id: string) => void;
   onNewBranch: () => void;
 }) {
   return (
@@ -122,25 +127,41 @@ function GlobalLevel({
           const isActive = highlightedBranchId === branch.id;
           return (
             <li key={branch.id}>
-              <button
-                type="button"
-                onClick={() => onSelectBranch(branch.id)}
-                className={cn(
-                  "group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all duration-200",
-                  isActive
-                    ? "border border-[rgba(46,232,74,0.25)] bg-[rgba(46,232,74,0.08)] text-white"
-                    : "border border-transparent text-white/60 hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
-                )}
-              >
-                <GitBranch
-                  className="h-4 w-4 shrink-0 transition-colors"
-                  style={{
-                    color: branchColors.get(branch.id)?.concept,
-                    opacity: isActive ? 1 : 0.5,
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onSelectBranch(branch.id)}
+                  className={cn(
+                    "group flex flex-1 items-center gap-3 rounded-xl px-3 py-3 text-left transition-all duration-200",
+                    isActive
+                      ? "border border-[rgba(46,232,74,0.25)] bg-[rgba(46,232,74,0.08)] text-white"
+                      : "border border-transparent text-white/60 hover:bg-[rgba(46,232,74,0.04)] hover:text-white/80",
+                  )}
+                >
+                  <GitBranch
+                    className="h-4 w-4 shrink-0 transition-colors"
+                    style={{
+                      color: branchColors.get(branch.id)?.concept,
+                      opacity: isActive ? 1 : 0.5,
+                    }}
+                  />
+                  <span className="min-w-0 truncate text-sm">
+                    {branch.title}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteBranch(branch.id);
                   }}
-                />
-                <span className="min-w-0 truncate text-sm">{branch.title}</span>
-              </button>
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-white/35 transition-colors hover:border-[rgba(248,113,113,0.35)] hover:bg-[rgba(248,113,113,0.12)] hover:text-red-300"
+                  aria-label={`Delete ${branch.title}`}
+                  title="Delete topic graph"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
               {isActive && (
                 <Button

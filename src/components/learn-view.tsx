@@ -27,6 +27,8 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -34,7 +36,10 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { ExcalidrawBoard } from "@/components/excalidraw-board";
+import {
+  type DrawSubmissionPayload,
+  ExcalidrawBoard,
+} from "@/components/excalidraw-board";
 import { MarkdownLite } from "@/components/markdown-lite";
 import { SproutAvatar } from "@/components/sprout-avatar";
 import { useAuth } from "@/hooks/use-auth";
@@ -350,14 +355,22 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 
 function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
   const parseAnswerModeToken = (raw: string): AnswerMode | null => {
-    const normalized = raw.trim().toLowerCase();
+    const normalized = raw
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ");
+    if (normalized === "text") return "text";
+    if (normalized === "code") return "code";
+    if (normalized === "draw" || normalized === "drawing") return "draw";
     if (
-      normalized === "text" ||
-      normalized === "code" ||
-      normalized === "draw" ||
-      normalized === "mcp"
+      normalized === "mcp" ||
+      normalized === "mcq" ||
+      normalized === "multiple choice" ||
+      normalized === "multiple choices" ||
+      normalized === "multiple choice question"
     ) {
-      return normalized;
+      return "text";
     }
     return null;
   };
@@ -401,33 +414,53 @@ function mapBackendMessagesToUi(messages: BackendChatMessage[]): ChatMessage[] {
     return { content: raw, channel: "answer" };
   };
 
-  return [...messages]
+  const sorted = [...messages]
     .filter(
       (message) => message.role === "user" || message.role === "assistant",
     )
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map((message) => {
-      if (message.role === "assistant") {
-        return {
-          id: message.id,
-          role: "ai" as const,
-          content: message.content,
-          linkedCardId: null,
-          linkedCardTitle: null,
-        };
-      }
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-      const parsed = parseTaggedUserMessage(message.content);
-      return {
+  const mapped: ChatMessage[] = [];
+  let pendingAssistantChannel: "answer" | "clarification" | null = null;
+
+  for (const message of sorted) {
+    if (message.role === "assistant") {
+      const channel =
+        message.kind === "hint_response"
+          ? "clarification"
+          : pendingAssistantChannel;
+
+      mapped.push({
         id: message.id,
-        role: "user" as const,
-        content: parsed.content,
+        role: "ai",
+        content: message.content,
         linkedCardId: null,
         linkedCardTitle: null,
-        channel: parsed.channel,
-        answerKind: parsed.answerKind,
-      };
+        channel: channel ?? undefined,
+      });
+
+      pendingAssistantChannel = null;
+      continue;
+    }
+
+    const parsed = parseTaggedUserMessage(message.content);
+    const channel =
+      message.kind === "hint_request" ? "clarification" : parsed.channel;
+
+    mapped.push({
+      id: message.id,
+      role: "user",
+      content: parsed.content,
+      linkedCardId: null,
+      linkedCardTitle: null,
+      channel,
+      answerKind: parsed.answerKind,
     });
+
+    pendingAssistantChannel = channel;
+  }
+
+  return mapped;
 }
 
 function splitTutorChunk(content: string): {
@@ -498,15 +531,22 @@ function splitTutorChunk(content: string): {
     const normalizedToken = raw
       .replace(/[*_`~]/g, "")
       .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ");
 
+    if (normalizedToken === "text") return "text";
+    if (normalizedToken === "code") return "code";
+    if (normalizedToken === "draw" || normalizedToken === "drawing")
+      return "draw";
     if (
-      normalizedToken === "text" ||
-      normalizedToken === "code" ||
-      normalizedToken === "draw" ||
-      normalizedToken === "mcp"
+      normalizedToken === "mcp" ||
+      normalizedToken === "mcq" ||
+      normalizedToken === "multiple choice" ||
+      normalizedToken === "multiple choices" ||
+      normalizedToken === "multiple choice question"
     ) {
-      return normalizedToken;
+      return "text";
     }
 
     return null;
@@ -514,23 +554,11 @@ function splitTutorChunk(content: string): {
 
   const extractQuestionType = (line: string): AnswerMode | null => {
     const stripped = stripQuestionLinePrefix(line);
-    const colonIndex = stripped.indexOf(":");
-    if (colonIndex === -1) return null;
-
-    const marker = stripped
-      .slice(0, colonIndex)
-      .replace(/[*_`~]/g, "")
-      .trim()
-      .toLowerCase();
-    if (
-      marker !== "question type" &&
-      marker !== "question-type" &&
-      marker !== "mode"
-    ) {
-      return null;
-    }
-
-    return parseQuestionTypeToken(stripped.slice(colonIndex + 1));
+    const match = stripped.match(
+      /^\s*(question\s*type|question-type|mode)\s*[:\-–—]\s*(.+)\s*$/i,
+    );
+    if (!match?.[2]) return null;
+    return parseQuestionTypeToken(match[2]);
   };
 
   const questionType =
@@ -542,6 +570,13 @@ function splitTutorChunk(content: string): {
       .join("\n")
       .trim();
 
+  const trimEmptyEdges = (lines: string[]) => {
+    const copy = [...lines];
+    while (copy.length && !copy[0].trim()) copy.shift();
+    while (copy.length && !copy[copy.length - 1].trim()) copy.pop();
+    return copy;
+  };
+
   for (let i = 0; i < rawLines.length; i++) {
     if (!isQuestionMarkerOnly(rawLines[i])) continue;
 
@@ -551,10 +586,30 @@ function splitTutorChunk(content: string): {
         break;
       }
       if (extractQuestionType(rawLines[j])) continue;
-      const normalizedLine = normalizeQuestionLine(rawLines[j]);
-      if (normalizedLine) questionParts.push(normalizedLine);
+
+      const rawLine = rawLines[j];
+      const comparableLine = stripQuestionLinePrefix(rawLine)
+        .replace(/[*_`~]/g, "")
+        .trim();
+
+      if (!questionParts.length && parseQuestionTypeToken(comparableLine)) {
+        continue;
+      }
+
+      if (!rawLine.trim()) {
+        if (questionParts.length) questionParts.push("");
+        continue;
+      }
+
+      if (!questionParts.length) {
+        const normalizedLeadLine = normalizeQuestionLine(rawLine);
+        if (normalizedLeadLine) questionParts.push(normalizedLeadLine);
+        continue;
+      }
+
+      questionParts.push(rawLine.trimEnd());
     }
-    const questionText = questionParts.join(" ").trim();
+    const questionText = trimEmptyEdges(questionParts).join("\n").trim();
 
     if (questionText) {
       return {
@@ -566,8 +621,28 @@ function splitTutorChunk(content: string): {
   }
 
   for (let i = 0; i < rawLines.length; i++) {
-    const questionText = extractInlineQuestion(rawLines[i]);
-    if (questionText) {
+    const inlineQuestionHead = extractInlineQuestion(rawLines[i]);
+    if (inlineQuestionHead) {
+      const questionParts: string[] = [inlineQuestionHead];
+      for (let j = i + 1; j < rawLines.length; j++) {
+        if (
+          isQuestionMarkerOnly(rawLines[j]) ||
+          hasInlineQuestion(rawLines[j])
+        ) {
+          break;
+        }
+        if (extractQuestionType(rawLines[j])) continue;
+
+        const rawLine = rawLines[j];
+        if (!rawLine.trim()) {
+          questionParts.push("");
+          continue;
+        }
+
+        questionParts.push(rawLine.trimEnd());
+      }
+
+      const questionText = trimEmptyEdges(questionParts).join("\n").trim();
       return {
         explanation: explanationWithoutQuestionType(rawLines.slice(0, i)),
         question: questionText,
@@ -597,7 +672,120 @@ function splitTutorChunk(content: string): {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-type AnswerMode = "text" | "code" | "draw" | "mcp";
+type AnswerMode = "text" | "code" | "draw";
+
+const CODE_KEYWORDS = new Set([
+  "and",
+  "as",
+  "break",
+  "case",
+  "catch",
+  "char",
+  "class",
+  "const",
+  "continue",
+  "def",
+  "do",
+  "double",
+  "elif",
+  "else",
+  "enum",
+  "false",
+  "finally",
+  "float",
+  "for",
+  "from",
+  "function",
+  "if",
+  "import",
+  "in",
+  "int",
+  "let",
+  "new",
+  "null",
+  "None",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "var",
+  "void",
+  "while",
+]);
+
+const CODE_TOKEN_REGEX =
+  /\/\/.*$|#.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:and|as|break|case|catch|char|class|const|continue|def|do|double|elif|else|enum|false|finally|float|for|from|function|if|import|in|int|let|new|null|None|private|protected|public|return|static|switch|this|throw|true|try|var|void|while)\b|\b\d+(?:\.\d+)?\b/g;
+
+function getCodeTokenColor(token: string): string | null {
+  if (token.startsWith("//") || token.startsWith("#")) return "#94a3b8";
+  if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`"))
+    return "#86efac";
+  if (/^\d+(?:\.\d+)?$/.test(token)) return "#fbbf24";
+  if (CODE_KEYWORDS.has(token)) return "#60a5fa";
+  return null;
+}
+
+function highlightCodeToNodes(source: string): ReactNode[] {
+  if (!source) return [];
+
+  const normalized = source.replaceAll("\r\n", "\n");
+  const lines = normalized.split("\n");
+  const nodes: ReactNode[] = [];
+  let absoluteOffset = 0;
+
+  for (const line of lines) {
+    const lineStart = absoluteOffset;
+    const regex = new RegExp(CODE_TOKEN_REGEX);
+    let cursor = 0;
+    let match = regex.exec(line);
+
+    while (match) {
+      const token = match[0];
+      const start = match.index ?? 0;
+      const end = start + token.length;
+
+      if (start > cursor) {
+        const plainText = line.slice(cursor, start);
+        nodes.push(<span key={`t-${lineStart + cursor}`}>{plainText}</span>);
+      }
+
+      const color = getCodeTokenColor(token);
+      nodes.push(
+        <span
+          key={`t-${lineStart + start}`}
+          style={color ? { color } : undefined}
+        >
+          {token}
+        </span>,
+      );
+
+      cursor = end;
+      match = regex.exec(line);
+    }
+
+    if (cursor < line.length) {
+      nodes.push(
+        <span key={`t-${lineStart + cursor}`}>{line.slice(cursor)}</span>,
+      );
+    } else if (!line.length) {
+      nodes.push(<span key={`t-${lineStart}`}> </span>);
+    }
+
+    absoluteOffset += line.length;
+    if (absoluteOffset < normalized.length) {
+      nodes.push(<br key={`br-${absoluteOffset}`} />);
+      absoluteOffset += 1;
+    }
+  }
+
+  return nodes;
+}
 
 const ANSWER_MODE_META: Record<
   AnswerMode,
@@ -625,12 +813,6 @@ const ANSWER_MODE_META: Record<
     helper: "Sketch and optionally add a short note.",
     placeholder: "Describe your drawing...",
     Icon: PenLine,
-  },
-  mcp: {
-    label: "MCP",
-    helper: "Select option(s) and explain briefly.",
-    placeholder: "Select option(s) and explain briefly...",
-    Icon: Layers,
   },
 };
 
@@ -727,7 +909,9 @@ export function LearnView() {
   const [answerInput, setAnswerInput] = useState("");
   const [codeAnswerInput, setCodeAnswerInput] = useState("");
   const [drawAnswerInput, setDrawAnswerInput] = useState("");
-  const [mcpAnswerInput, setMcpAnswerInput] = useState("");
+  const [drawAnswerImageDataUrl, setDrawAnswerImageDataUrl] = useState<
+    string | null
+  >(null);
   const [answerMode, setAnswerMode] = useState<AnswerMode>("text");
   const [isDrawAnswerBoardOpen, setIsDrawAnswerBoardOpen] = useState(false);
   const [isDrawAnswerBoardSubmitted, setIsDrawAnswerBoardSubmitted] =
@@ -737,6 +921,9 @@ export function LearnView() {
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isTutorSending, setIsTutorSending] = useState(false);
+  const [pendingTutorChannel, setPendingTutorChannel] = useState<
+    "answer" | "clarification" | null
+  >(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [nodeTitle, setNodeTitle] = useState<string | null>(null);
   const [nodeExplanation, setNodeExplanation] = useState<string | null>(null);
@@ -744,9 +931,15 @@ export function LearnView() {
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const codeAnswerLineNumbersRef = useRef<HTMLDivElement | null>(null);
+  const codeAnswerOverlayRef = useRef<HTMLPreElement | null>(null);
 
   const activeCard = CARDS[activeIndex] as LearnCard | undefined;
   const isFinished = activeIndex >= CARDS.length;
+  const highlightedCodeAnswerNodes = useMemo(
+    () => highlightCodeToNodes(codeAnswerInput),
+    [codeAnswerInput],
+  );
 
   const conversation = useVoiceConversation();
 
@@ -779,6 +972,35 @@ export function LearnView() {
       block: "center",
     });
   }, []);
+
+  const syncCodeAnswerScroll = useCallback((textarea: HTMLTextAreaElement) => {
+    if (codeAnswerLineNumbersRef.current) {
+      codeAnswerLineNumbersRef.current.scrollTop = textarea.scrollTop;
+    }
+    if (!codeAnswerOverlayRef.current) return;
+    codeAnswerOverlayRef.current.scrollTop = textarea.scrollTop;
+    codeAnswerOverlayRef.current.scrollLeft = textarea.scrollLeft;
+  }, []);
+
+  const handleCodeAnswerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+
+      const textarea = event.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const nextValue = `${codeAnswerInput.slice(0, start)}\t${codeAnswerInput.slice(end)}`;
+
+      setCodeAnswerInput(nextValue);
+      requestAnimationFrame(() => {
+        textarea.selectionStart = start + 1;
+        textarea.selectionEnd = start + 1;
+        syncCodeAnswerScroll(textarea);
+      });
+    },
+    [codeAnswerInput, syncCodeAnswerScroll],
+  );
 
   useEffect(() => {
     if (!activeCard) return;
@@ -916,6 +1138,7 @@ export function LearnView() {
       content: string,
       channel: "answer" | "clarification",
       answerKind?: AnswerMode,
+      options?: { drawingImageDataUrl?: string | null },
     ) => {
       const trimmedInput = content.trim();
       if (!trimmedInput) return;
@@ -934,6 +1157,7 @@ export function LearnView() {
       if (isBackendChatEnabled && chatSessionId && backendUserId) {
         setMessages((prev) => [...prev, userMsg]);
         setIsTutorSending(true);
+        setPendingTutorChannel(channel);
         setChatError(null);
 
         try {
@@ -944,6 +1168,7 @@ export function LearnView() {
           const response = await sendTutorMessage(chatSessionId, {
             userId: backendUserId,
             content: taggedContent,
+            drawingImageDataUrl: options?.drawingImageDataUrl ?? undefined,
           });
           setIsSessionComplete((prev) => prev || response.isComplete);
 
@@ -955,6 +1180,7 @@ export function LearnView() {
               content: response.message,
               linkedCardId: null,
               linkedCardTitle: null,
+              channel,
               isComplete: response.isComplete,
             },
           ]);
@@ -964,6 +1190,7 @@ export function LearnView() {
           );
         } finally {
           setIsTutorSending(false);
+          setPendingTutorChannel(null);
         }
 
         return;
@@ -1010,14 +1237,17 @@ export function LearnView() {
         text = answerInput.trim();
       } else if (answerMode === "code") {
         text = codeAnswerInput.trim();
-      } else if (answerMode === "mcp") {
-        text = mcpAnswerInput.trim();
       } else {
         const drawText = drawAnswerInput.trim();
-        if (isDrawAnswerBoardSubmitted && drawText) {
-          text = `${drawText}\n\n[Drawing board submitted]`;
+        const hasDrawAttachment = Boolean(drawAnswerImageDataUrl);
+        if (hasDrawAttachment && drawText) {
+          text = `${drawText}\n\n[Drawing image attached]`;
+        } else if (hasDrawAttachment) {
+          text = "[Drawing image attached]";
+        } else if (isDrawAnswerBoardSubmitted && drawText) {
+          text = `${drawText}\n\n[Drawing submitted]`;
         } else if (isDrawAnswerBoardSubmitted) {
-          text = "[Drawing board submitted]";
+          text = "[Drawing submitted]";
         } else {
           text = drawText;
         }
@@ -1029,21 +1259,23 @@ export function LearnView() {
         setAnswerInput("");
       } else if (answerMode === "code") {
         setCodeAnswerInput("");
-      } else if (answerMode === "mcp") {
-        setMcpAnswerInput("");
       } else {
         setDrawAnswerInput("");
+        setDrawAnswerImageDataUrl(null);
         setIsDrawAnswerBoardSubmitted(false);
       }
 
-      await sendMessageToTutor(text, "answer", answerMode);
+      await sendMessageToTutor(text, "answer", answerMode, {
+        drawingImageDataUrl:
+          answerMode === "draw" ? drawAnswerImageDataUrl : undefined,
+      });
     },
     [
       answerMode,
       answerInput,
       codeAnswerInput,
-      mcpAnswerInput,
       drawAnswerInput,
+      drawAnswerImageDataUrl,
       isDrawAnswerBoardSubmitted,
       sendMessageToTutor,
     ],
@@ -1059,7 +1291,9 @@ export function LearnView() {
   const tutorChunks = useMemo(() => {
     if (!isBackendChatEnabled) return [];
 
-    const aiMessages = messages.filter((message) => message.role === "ai");
+    const aiMessages = messages.filter(
+      (message) => message.role === "ai" && message.channel !== "clarification",
+    );
     let lastKnownQuestion: string | null = null;
     let lastKnownQuestionType: AnswerMode = "text";
 
@@ -1138,6 +1372,7 @@ export function LearnView() {
 
     for (const message of messages) {
       if (message.role === "ai") {
+        if (message.channel === "clarification") continue;
         const chunk = chunkById.get(message.id);
         if (!chunk) continue;
         const agentItem: Extract<BackendTimelineItem, { kind: "ai" }> = {
@@ -1150,10 +1385,7 @@ export function LearnView() {
       } else {
         if (message.channel === "answer" && lastAgentItem) {
           lastAgentItem.answers.push(message);
-          continue;
         }
-
-        timeline.push({ kind: "user", message });
       }
     }
 
@@ -1161,10 +1393,7 @@ export function LearnView() {
   }, [isBackendChatEnabled, messages, tutorChunks]);
 
   const sidebarMessages = isBackendChatEnabled
-    ? messages.filter(
-        (message) =>
-          message.role === "user" && message.channel === "clarification",
-      )
+    ? messages.filter((message) => message.channel === "clarification")
     : visibleMessages;
 
   // Cards to render: completed + active only
@@ -1173,16 +1402,16 @@ export function LearnView() {
   const currentAnswerDraft = useMemo(() => {
     if (answerMode === "text") return answerInput.trim();
     if (answerMode === "code") return codeAnswerInput.trim();
-    if (answerMode === "mcp") return mcpAnswerInput.trim();
     if (drawAnswerInput.trim()) return drawAnswerInput.trim();
-    if (isDrawAnswerBoardSubmitted) return "[Drawing board submitted]";
+    if (drawAnswerImageDataUrl) return "[Drawing image attached]";
+    if (isDrawAnswerBoardSubmitted) return "[Drawing submitted]";
     return "";
   }, [
     answerMode,
     answerInput,
     codeAnswerInput,
-    mcpAnswerInput,
     drawAnswerInput,
+    drawAnswerImageDataUrl,
     isDrawAnswerBoardSubmitted,
   ]);
   const isClarificationSendDisabled =
@@ -1210,35 +1439,20 @@ export function LearnView() {
 
     router.push("/graph");
   }, [branchIdFromQuery, conceptIdFromQuery, backendUserId, router]);
-  const graphTheme = isBackendChatEnabled
-    ? ({
-        bg: "#050608",
-        panel: "rgba(255,255,255,0.035)",
-        panelMuted: "rgba(255,255,255,0.02)",
-        border: "rgba(255,255,255,0.1)",
-        borderStrong: "rgba(255,160,37,0.35)",
-        textMuted: "rgba(255,255,255,0.52)",
-        accent: "#ffa025",
-        accentSoft: "#ffb95a",
-        accentBg: "rgba(255,160,37,0.12)",
-        accentBgStrong: "rgba(255,160,37,0.18)",
-        accentBorder: "rgba(255,160,37,0.28)",
-        accentText: "#ffd089",
-      } as const)
-    : ({
-        bg: "#0A1A0F",
-        panel: "rgba(17,34,20,0.55)",
-        panelMuted: "rgba(17,34,20,0.42)",
-        border: "rgba(46,232,74,0.16)",
-        borderStrong: "rgba(46,232,74,0.28)",
-        textMuted: "rgba(255,255,255,0.58)",
-        accent: "#2EE84A",
-        accentSoft: "#3DBF5A",
-        accentBg: "rgba(46,232,74,0.1)",
-        accentBgStrong: "rgba(46,232,74,0.16)",
-        accentBorder: "rgba(46,232,74,0.3)",
-        accentText: "#BFF8C9",
-      } as const);
+  const graphTheme = {
+    bg: "#0A1A0F",
+    panel: "rgba(17,34,20,0.55)",
+    panelMuted: "rgba(17,34,20,0.42)",
+    border: "rgba(46,232,74,0.16)",
+    borderStrong: "rgba(46,232,74,0.28)",
+    textMuted: "rgba(255,255,255,0.58)",
+    accent: "#2EE84A",
+    accentSoft: "#3DBF5A",
+    accentBg: "rgba(46,232,74,0.1)",
+    accentBgStrong: "rgba(46,232,74,0.16)",
+    accentBorder: "rgba(46,232,74,0.3)",
+    accentText: "#BFF8C9",
+  } as const;
 
   return (
     <div
@@ -1246,7 +1460,7 @@ export function LearnView() {
       style={{ background: graphTheme.bg }}
     >
       {/* ── Card column ───────────────────────────────────── */}
-      <div className="order-2 flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
         <header
           className="flex shrink-0 items-center justify-between border-b px-8 py-4"
@@ -1382,6 +1596,11 @@ export function LearnView() {
                     const canAnswerCurrentQuestion =
                       isCurrentChunk &&
                       Boolean(chunk.question) &&
+                      item.answers.length === 0 &&
+                      !(
+                        isTutorSending &&
+                        pendingTutorChannel === "clarification"
+                      ) &&
                       !isSessionComplete;
 
                     return (
@@ -1436,7 +1655,7 @@ export function LearnView() {
                               className="mt-5 rounded-2xl border p-5"
                               style={{
                                 borderColor: graphTheme.accentBorder,
-                                background: "rgba(255,160,37,0.09)",
+                                background: graphTheme.accentBg,
                               }}
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1540,19 +1759,116 @@ export function LearnView() {
                                     />
                                   )}
                                   {answerMode === "code" && (
-                                    <textarea
-                                      value={codeAnswerInput}
-                                      onChange={(e) =>
-                                        setCodeAnswerInput(e.target.value)
-                                      }
-                                      placeholder={questionMeta.placeholder}
-                                      disabled={isTutorSending || isChatLoading}
-                                      className="h-40 w-full resize-none rounded-xl px-3 py-2 font-mono text-xs text-white outline-none placeholder:text-white/25"
+                                    <div
+                                      className="overflow-hidden rounded-xl border"
                                       style={{
-                                        background: "rgba(255,255,255,0.06)",
-                                        border: `1px solid ${graphTheme.border}`,
+                                        background: "rgba(5,12,8,0.95)",
+                                        borderColor: graphTheme.border,
                                       }}
-                                    />
+                                    >
+                                      <div
+                                        className="flex items-center gap-2 border-b px-3 py-2"
+                                        style={{
+                                          borderColor: "rgba(255,255,255,0.08)",
+                                          background: "rgba(255,255,255,0.03)",
+                                        }}
+                                      >
+                                        <div
+                                          className="h-2.5 w-2.5 rounded-full"
+                                          style={{
+                                            background: "rgba(239,68,68,0.55)",
+                                          }}
+                                        />
+                                        <div
+                                          className="h-2.5 w-2.5 rounded-full"
+                                          style={{
+                                            background: "rgba(46,232,74,0.45)",
+                                          }}
+                                        />
+                                        <div
+                                          className="h-2.5 w-2.5 rounded-full"
+                                          style={{
+                                            background: "rgba(74,222,128,0.55)",
+                                          }}
+                                        />
+                                        <span
+                                          className="ml-1 text-[11px]"
+                                          style={{
+                                            color: "rgba(255,255,255,0.4)",
+                                          }}
+                                        >
+                                          answer.ts
+                                        </span>
+                                      </div>
+                                      <div
+                                        className="grid"
+                                        style={{
+                                          gridTemplateColumns: "auto 1fr",
+                                        }}
+                                      >
+                                        <div
+                                          ref={codeAnswerLineNumbersRef}
+                                          className="h-44 overflow-hidden border-r px-2 py-3 text-right text-[11px] leading-6 select-none"
+                                          style={{
+                                            borderColor:
+                                              "rgba(255,255,255,0.08)",
+                                            color: "rgba(255,255,255,0.3)",
+                                            background:
+                                              "rgba(255,255,255,0.02)",
+                                          }}
+                                        >
+                                          <pre className="m-0 font-mono leading-6 whitespace-pre">
+                                            {Array.from(
+                                              {
+                                                length: Math.max(
+                                                  1,
+                                                  codeAnswerInput.split("\n")
+                                                    .length,
+                                                ),
+                                              },
+                                              (_, i) => i + 1,
+                                            ).join("\n")}
+                                          </pre>
+                                        </div>
+                                        <div className="relative h-44">
+                                          {highlightedCodeAnswerNodes.length ? (
+                                            <pre
+                                              ref={codeAnswerOverlayRef}
+                                              aria-hidden
+                                              className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre px-3 py-3 font-mono text-xs leading-6 text-[#e2e8f0]"
+                                            >
+                                              {highlightedCodeAnswerNodes}
+                                            </pre>
+                                          ) : (
+                                            <div
+                                              className="pointer-events-none absolute inset-0 px-3 py-3 font-mono text-xs leading-6"
+                                              style={{
+                                                color: "rgba(255,255,255,0.25)",
+                                              }}
+                                            >
+                                              {questionMeta.placeholder}
+                                            </div>
+                                          )}
+                                          <textarea
+                                            value={codeAnswerInput}
+                                            onChange={(e) =>
+                                              setCodeAnswerInput(e.target.value)
+                                            }
+                                            onKeyDown={handleCodeAnswerKeyDown}
+                                            onScroll={(e) =>
+                                              syncCodeAnswerScroll(
+                                                e.currentTarget,
+                                              )
+                                            }
+                                            disabled={
+                                              isTutorSending || isChatLoading
+                                            }
+                                            spellCheck={false}
+                                            className="absolute inset-0 h-full w-full resize-none bg-transparent px-3 py-3 font-mono text-xs leading-6 text-transparent caret-white outline-none selection:bg-[rgba(46,232,74,0.35)]"
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
                                   )}
                                   {answerMode === "draw" && (
                                     <div className="space-y-2">
@@ -1579,11 +1895,10 @@ export function LearnView() {
                                           }
                                           className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold transition-all hover:opacity-85"
                                           style={{
-                                            background:
-                                              "rgba(244,114,182,0.12)",
+                                            background: graphTheme.accentBg,
                                             borderColor:
-                                              "rgba(244,114,182,0.28)",
-                                            color: "#f9a8d4",
+                                              graphTheme.accentBorder,
+                                            color: graphTheme.accentText,
                                           }}
                                         >
                                           <PenLine className="h-3.5 w-3.5" />
@@ -1601,22 +1916,6 @@ export function LearnView() {
                                       </div>
                                     </div>
                                   )}
-                                  {answerMode === "mcp" && (
-                                    <textarea
-                                      value={mcpAnswerInput}
-                                      onChange={(e) =>
-                                        setMcpAnswerInput(e.target.value)
-                                      }
-                                      placeholder={questionMeta.placeholder}
-                                      disabled={isTutorSending || isChatLoading}
-                                      className="h-24 w-full resize-none rounded-xl px-3 py-2 text-sm text-white outline-none placeholder:text-white/25"
-                                      style={{
-                                        background: "rgba(255,255,255,0.06)",
-                                        border: `1px solid ${graphTheme.border}`,
-                                      }}
-                                    />
-                                  )}
-
                                   <button
                                     type="submit"
                                     disabled={isAnswerSendDisabled}
@@ -1864,7 +2163,7 @@ export function LearnView() {
         <>
           {/* ── AI Chat ───────────────────────────────────────── */}
           <aside
-            className="order-1 flex w-[400px] shrink-0 flex-col border-r"
+            className="flex w-[400px] shrink-0 flex-col border-l"
             style={{
               borderColor: graphTheme.border,
               background: graphTheme.panelMuted,
@@ -2162,8 +2461,9 @@ export function LearnView() {
 
               <div className="relative min-h-0 flex-1">
                 <ExcalidrawBoard
-                  onSubmit={() => {
+                  onSubmit={(payload: DrawSubmissionPayload) => {
                     setIsDrawAnswerBoardSubmitted(true);
+                    setDrawAnswerImageDataUrl(payload.imageDataUrl);
                     setIsDrawAnswerBoardOpen(false);
                   }}
                   isSubmitted={false}
@@ -2193,7 +2493,7 @@ function VoiceAgentPanel({
 
   return (
     <aside
-      className="order-1 flex w-[400px] shrink-0 flex-col border-r"
+      className="flex w-[400px] shrink-0 flex-col border-l"
       style={{
         borderColor: "rgba(52,211,153,0.15)",
         background: "rgba(52,211,153,0.02)",
@@ -3487,10 +3787,13 @@ function DrawCardUI({
 }) {
   const [modalOpen, setModalOpen] = useState(false);
 
-  const handleSubmit = useCallback(() => {
-    onSubmit();
-    setModalOpen(false);
-  }, [onSubmit]);
+  const handleSubmit = useCallback(
+    (_payload: DrawSubmissionPayload) => {
+      onSubmit();
+      setModalOpen(false);
+    },
+    [onSubmit],
+  );
 
   return (
     <CardShell state={state}>
